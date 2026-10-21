@@ -32,13 +32,12 @@ public static class LeylineDriverService
     private const string PropKeyParentPnpId = "{b3f8fa53-0004-438e-9003-51a46e139bfc},2";
     private const string PropKeyDeviceFriendlyName = "{a45c254e-df1c-4efd-8020-67d146a850e0},14";
 
-    public const string BrandInterfaceName = "Leyline Virtual Audio";
     private const string WdmHardwareId = @"ROOT\SteamStreamingMicrophone";
 
     private static Guid MediaClassGuid = new("4d36e96c-e325-11ce-bfc1-08002be10318");
 
-    // Windows shows an endpoint as "<endpoint DeviceDesc> (<interface name>)": endpoints are named after the bus and the
-    // interface is BrandInterfaceName, giving "System (Leyline Virtual Audio)".
+    // Windows shows an endpoint as "<endpoint DeviceDesc> (<device name>)" and numbers devices that share a name
+    // ("3- Leyline Virtual Audio"), so each device is named after its bus: "Speakers (Leyline Browser)".
     private static readonly (string RenderBus, string CaptureMix)[] DesiredVirtualBuses =
     [
         ("System",     "System"),
@@ -180,7 +179,7 @@ public static class LeylineDriverService
 
     /// <summary>
     /// Creates dedicated standalone PnP Virtual Audio Device instances for Leyline (separate from Elgato's driver)
-    /// and names their Render & Capture endpoints "<bus> (Leyline Virtual Audio)".
+    /// and names them per bus: endpoints read "Speakers (Leyline Browser)" / "Microphone (Leyline Browser)".
     /// </summary>
     public static bool ProvisionLeylineEndpointsElevated(out string message)
     {
@@ -223,7 +222,7 @@ public static class LeylineDriverService
                 }
                 else
                 {
-                    string? createdId = CreatePnpVirtualAudioNode(BrandInterfaceName);
+                    string? createdId = CreatePnpVirtualAudioNode(DeviceName(renderBus));
                     if (!string.IsNullOrWhiteSpace(createdId))
                     {
                         updatedNodes.Add(new LeylineDriverNodeRecord
@@ -261,9 +260,10 @@ public static class LeylineDriverService
             int namedEndpoints = 0;
             foreach (var node in nodes)
             {
-                SetPnpNodeFriendlyName(node.PnpInstanceId, BrandInterfaceName);
-                namedEndpoints += NameEndpointsForPnpNode("Render", node.PnpInstanceId, node.RenderBusName);
-                namedEndpoints += NameEndpointsForPnpNode("Capture", node.PnpInstanceId, node.CaptureMixName);
+                string deviceName = DeviceName(node.RenderBusName);
+                SetPnpNodeFriendlyName(node.PnpInstanceId, deviceName);
+                namedEndpoints += NameEndpointsForPnpNode("Render", node.PnpInstanceId, "Speakers", deviceName);
+                namedEndpoints += NameEndpointsForPnpNode("Capture", node.PnpInstanceId, "Microphone", deviceName);
             }
 
             RemoveLegacyVoidPatchEndpoints();
@@ -465,7 +465,9 @@ public static class LeylineDriverService
         catch { }
     }
 
-    private static int NameEndpointsForPnpNode(string flowName, string pnpInstanceId, string busName)
+    private static string DeviceName(string busName) => $"Leyline {busName}";
+
+    private static int NameEndpointsForPnpNode(string flowName, string pnpInstanceId, string endpointName, string deviceName)
     {
         int updated = 0;
         string flowPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{flowName}";
@@ -489,8 +491,8 @@ public static class LeylineDriverService
 
             if (writeKey != null)
             {
-                writeKey.SetValue(PropKeyDeviceDesc, busName, RegistryValueKind.String);
-                writeKey.SetValue(PropKeyInterfaceFriendlyName, BrandInterfaceName, RegistryValueKind.String);
+                writeKey.SetValue(PropKeyDeviceDesc, endpointName, RegistryValueKind.String);
+                writeKey.SetValue(PropKeyInterfaceFriendlyName, deviceName, RegistryValueKind.String);
                 writeKey.DeleteValue(PropKeyDeviceFriendlyName, false);
                 updated++;
             }
