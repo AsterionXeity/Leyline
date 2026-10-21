@@ -35,14 +35,18 @@ public partial class App : Application
         // 2. Handle elevated CLI driver provisioning commands
         if (cliArgs.Contains("--provision-driver", StringComparer.OrdinalIgnoreCase))
         {
-            bool ok = LeylineDriverService.ProvisionLeylineEndpointsElevated(out _);
+            LeylineDriverService.Log("--provision-driver: started");
+            bool ok = LeylineDriverService.ProvisionLeylineEndpointsElevated(out string provisionMessage);
+            LeylineDriverService.Log($"--provision-driver: {(ok ? "ok" : "FAILED")} - {provisionMessage}");
             Environment.Exit(ok ? 0 : 1);
             return;
         }
 
         if (cliArgs.Contains("--restore-driver", StringComparer.OrdinalIgnoreCase))
         {
-            bool ok = LeylineDriverService.RestoreOriginalEndpointsElevated(out _);
+            LeylineDriverService.Log("--restore-driver: started");
+            bool ok = LeylineDriverService.RestoreOriginalEndpointsElevated(out string restoreMessage);
+            LeylineDriverService.Log($"--restore-driver: {(ok ? "ok" : "FAILED")} - {restoreMessage}");
             Environment.Exit(ok ? 0 : 1);
             return;
         }

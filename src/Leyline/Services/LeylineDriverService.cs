@@ -37,7 +37,8 @@ public static class LeylineDriverService
 
     private static Guid MediaClassGuid = new("4d36e96c-e325-11ce-bfc1-08002be10318");
 
-    // Short bus names; Windows shows endpoints as "<bus> (Leyline Virtual Audio)", so the brand appears exactly once.
+    // Windows shows an endpoint as "<endpoint DeviceDesc> (<interface name>)": endpoints are named after the bus and the
+    // interface is BrandInterfaceName, giving "System (Leyline Virtual Audio)".
     private static readonly (string RenderBus, string CaptureMix)[] DesiredVirtualBuses =
     [
         ("System",     "System"),
@@ -66,6 +67,25 @@ public static class LeylineDriverService
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Leyline",
         "driver-endpoint-backup.json");
+
+    private static string LogFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Leyline",
+        "driver.log");
+
+    /// <summary>
+    /// Appends a line to %APPDATA%\Leyline\driver.log. The elevated helper has no UI, so this is the only record of what it did.
+    /// </summary>
+    public static void Log(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogFilePath)!);
+            string elevation = IsRunningAsAdministrator() ? "admin" : "user";
+            File.AppendAllText(LogFilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{Environment.ProcessId} {elevation}] {message}{Environment.NewLine}");
+        }
+        catch { }
+    }
 
     public static bool IsRunningAsAdministrator()
     {
@@ -131,7 +151,14 @@ public static class LeylineDriverService
                 return false;
             }
 
-            proc.WaitForExit(35000);
+            if (!proc.WaitForExit(35000))
+            {
+                Log($"{arg}: elevated helper still running after 35 s");
+                statusMessage = "Driver action is taking longer than expected; check again in a moment.";
+                return false;
+            }
+
+            Log($"{arg}: elevated helper exited with code {proc.ExitCode}");
             if (proc.ExitCode == 0)
             {
                 statusMessage = install
@@ -145,6 +172,7 @@ public static class LeylineDriverService
         }
         catch (Exception ex)
         {
+            Log($"Driver action failed to start: {ex.Message}");
             statusMessage = $"Driver action cancelled or failed: {ex.Message}";
             return false;
         }
@@ -156,6 +184,12 @@ public static class LeylineDriverService
     /// </summary>
     public static bool ProvisionLeylineEndpointsElevated(out string message)
     {
+        if (!IsRunningAsAdministrator())
+        {
+            message = "Administrator rights are required to change Leyline virtual audio devices.";
+            return false;
+        }
+
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(NodesFilePath)!);
@@ -189,7 +223,7 @@ public static class LeylineDriverService
                 }
                 else
                 {
-                    string? createdId = CreatePnpVirtualAudioNode($"Leyline {renderBus}");
+                    string? createdId = CreatePnpVirtualAudioNode(BrandInterfaceName);
                     if (!string.IsNullOrWhiteSpace(createdId))
                     {
                         updatedNodes.Add(new LeylineDriverNodeRecord
@@ -203,6 +237,12 @@ public static class LeylineDriverService
             }
 
             var nodes = updatedNodes;
+            if (nodes.Count == 0)
+            {
+                message = "No Leyline virtual audio devices could be created.";
+                return false;
+            }
+
             SaveNodes(nodes);
 
             // Bind/install the signed WDM driver onto the newly registered PnP nodes
@@ -213,18 +253,20 @@ public static class LeylineDriverService
                 0x00000001u | 0x00000004u, // INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE
                 out _);
 
-            // Give Windows AudioEndpointBuilder a moment to populate the MMDevice registry keys
-            Thread.Sleep(1200);
+            // Wait for AudioEndpointBuilder to create each node's render and capture endpoints; naming them earlier
+            // leaves reused endpoints with stale names.
+            WaitForEndpoints(nodes, TimeSpan.FromSeconds(15));
 
             // Set friendly names in Device Manager & MMDevices\Audio\Render & Capture for ONLY Leyline's PnP nodes
             int namedEndpoints = 0;
             foreach (var node in nodes)
             {
-                SetPnpNodeFriendlyName(node.PnpInstanceId, $"Leyline {node.RenderBusName}");
+                SetPnpNodeFriendlyName(node.PnpInstanceId, BrandInterfaceName);
                 namedEndpoints += NameEndpointsForPnpNode("Render", node.PnpInstanceId, node.RenderBusName);
                 namedEndpoints += NameEndpointsForPnpNode("Capture", node.PnpInstanceId, node.CaptureMixName);
             }
 
+            RemoveLegacyVoidPatchEndpoints();
             RestartWindowsAudioServiceSoft();
 
             message = $"Created {nodes.Count} standalone Leyline Virtual Audio devices ({namedEndpoints} endpoints active).";
@@ -239,6 +281,12 @@ public static class LeylineDriverService
 
     public static bool RestoreOriginalEndpointsElevated(out string message)
     {
+        if (!IsRunningAsAdministrator())
+        {
+            message = "Administrator rights are required to change Leyline virtual audio devices.";
+            return false;
+        }
+
         try
         {
             RestoreLegacyBackupsIfAny();
@@ -247,7 +295,9 @@ public static class LeylineDriverService
             int removed = 0;
             foreach (var node in nodes)
             {
-                if (RemovePnpVirtualAudioNode(node.PnpInstanceId))
+                bool ok = RemovePnpVirtualAudioNode(node.PnpInstanceId);
+                Log($"Remove {node.PnpInstanceId}: {(ok ? "ok" : $"failed (Win32 error {Marshal.GetLastWin32Error()})")}");
+                if (ok)
                     removed++;
             }
 
@@ -370,6 +420,38 @@ public static class LeylineDriverService
         return key != null;
     }
 
+    private static void WaitForEndpoints(List<LeylineDriverNodeRecord> nodes, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            bool allReady = nodes.All(n =>
+                CountEndpointsForPnpNode("Render", n.PnpInstanceId) > 0 &&
+                CountEndpointsForPnpNode("Capture", n.PnpInstanceId) > 0);
+            if (allReady)
+                return;
+            Thread.Sleep(500);
+        }
+        Log("Timed out waiting for endpoints; naming the ones that exist");
+    }
+
+    private static int CountEndpointsForPnpNode(string flowName, string pnpInstanceId)
+    {
+        string flowPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{flowName}";
+        using var flowKey = Registry.LocalMachine.OpenSubKey(flowPath, false);
+        if (flowKey == null) return 0;
+
+        int count = 0;
+        foreach (var endpointGuid in flowKey.GetSubKeyNames())
+        {
+            using var props = Registry.LocalMachine.OpenSubKey($@"{flowPath}\{endpointGuid}\Properties", false);
+            string parentId = props?.GetValue(PropKeyParentPnpId) as string ?? string.Empty;
+            if (parentId.Contains(pnpInstanceId, StringComparison.OrdinalIgnoreCase))
+                count++;
+        }
+        return count;
+    }
+
     private static void SetPnpNodeFriendlyName(string instanceId, string friendlyName)
     {
         try
@@ -383,7 +465,7 @@ public static class LeylineDriverService
         catch { }
     }
 
-    private static int NameEndpointsForPnpNode(string flowName, string pnpInstanceId, string busDisplayName)
+    private static int NameEndpointsForPnpNode(string flowName, string pnpInstanceId, string busName)
     {
         int updated = 0;
         string flowPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{flowName}";
@@ -407,7 +489,7 @@ public static class LeylineDriverService
 
             if (writeKey != null)
             {
-                writeKey.SetValue(PropKeyDeviceDesc, busDisplayName, RegistryValueKind.String);
+                writeKey.SetValue(PropKeyDeviceDesc, busName, RegistryValueKind.String);
                 writeKey.SetValue(PropKeyInterfaceFriendlyName, BrandInterfaceName, RegistryValueKind.String);
                 writeKey.DeleteValue(PropKeyDeviceFriendlyName, false);
                 updated++;
@@ -445,6 +527,29 @@ public static class LeylineDriverService
                 }
             }
             File.Delete(LegacyBackupFilePath);
+        }
+        catch { }
+    }
+
+    // Endpoint device nodes left over from the app's former name (VoidPatch) keep their old names after the rename.
+    private static void RemoveLegacyVoidPatchEndpoints()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -WindowStyle Hidden -Command \"Get-PnpDevice -Class AudioEndpoint | Where-Object FriendlyName -like '*VoidPatch*' | ForEach-Object { pnputil /remove-device $_.InstanceId | Out-Null; $_.InstanceId }\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true
+            };
+            using var p = Process.Start(psi);
+            string removed = p?.StandardOutput.ReadToEnd() ?? string.Empty;
+            p?.WaitForExit(15000);
+            int count = removed.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            if (count > 0)
+                Log($"Removed {count} legacy VoidPatch endpoint device nodes");
         }
         catch { }
     }
