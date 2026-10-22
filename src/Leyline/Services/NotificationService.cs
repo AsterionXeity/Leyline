@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 
@@ -9,6 +10,13 @@ namespace Leyline.Services;
 /// </summary>
 public static class NotificationService
 {
+    /// <summary>
+    /// Leyline's AppUserModelID; installer\Leyline.iss gives its shortcuts the same one. Without an explicit ID,
+    /// notifications are registered under one derived from the exe path, so each install location (and the
+    /// Debug build) became a separate notification app, and Windows kept showing that app's first icon.
+    /// </summary>
+    public const string AppUserModelId = "AsterionXeity.Leyline";
+
     private const string Group = "Leyline";
     private const string ScanTag = "vst-scan";
 
@@ -22,11 +30,19 @@ public static class NotificationService
     /// <summary>Raised on a background thread when a notification is clicked.</summary>
     public static event Action? OpenRequested;
 
-    /// <summary>Registers Leyline with Windows notifications. Call once, in the main instance only.</summary>
+    [DllImport("shell32.dll", PreserveSig = false)]
+    private static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string appId);
+
+    /// <summary>
+    /// Registers Leyline with Windows notifications. Call once, in the main instance only, before creating the
+    /// window (the app ID also groups Leyline's taskbar button).
+    /// </summary>
     public static void Initialize()
     {
         try
         {
+            SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+
             if (!AppNotificationManager.IsSupported())
                 return;
 

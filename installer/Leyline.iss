@@ -53,9 +53,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Leyline"; Filename: "{app}\Leyline.exe"
+; AppUserModelID matches NotificationService.AppUserModelId, so Windows ties the taskbar button and notifications
+; to these shortcuts (name and icon).
+Name: "{group}\Leyline"; Filename: "{app}\Leyline.exe"; AppUserModelID: "AsterionXeity.Leyline"
 Name: "{group}\Uninstall Leyline"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Leyline"; Filename: "{app}\Leyline.exe"; Tasks: desktopicon
+Name: "{autodesktop}\Leyline"; Filename: "{app}\Leyline.exe"; AppUserModelID: "AsterionXeity.Leyline"; Tasks: desktopicon
 
 [Run]
 ; Leyline checks its driver on launch and prompts to install or update it.
