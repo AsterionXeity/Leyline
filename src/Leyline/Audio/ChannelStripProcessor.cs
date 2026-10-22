@@ -370,10 +370,10 @@ public sealed class ChannelStripProcessor : IDisposable
             _micRecBuffer.ClearBuffer();
     }
 
-    public void DecayAndPublishMeters()
+    public void DecayAndPublishMeters(float decay)
     {
-        _smoothedPeakL *= 0.84f;
-        _smoothedPeakR *= 0.84f;
+        _smoothedPeakL *= decay;
+        _smoothedPeakR *= decay;
         if (_smoothedPeakL < 0.0005f) _smoothedPeakL = 0f;
         if (_smoothedPeakR < 0.0005f) _smoothedPeakR = 0f;
 

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Leyline.Audio;
 using Leyline.Models;
 using Leyline.Services;
@@ -13,7 +14,9 @@ namespace Leyline.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly DispatcherQueue? _dispatcherQueue;
-    private readonly DispatcherTimer _meterTimer;
+    // Meters update on the UI's frame callback, at most this often (120 per second)
+    private const double MinMeterIntervalMs = 8.0;
+    private TimeSpan _lastMeterFrame;
     private readonly DispatcherTimer _sessionPollTimer;
 
     private AudioDeviceInfo? _selectedMonitorDevice;
@@ -788,22 +791,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshActiveAppSessions();
         ScanVstPlugins(forceDeepProbe: false);
 
-        _meterTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(33)
-        };
-        _meterTimer.Tick += (_, _) =>
-        {
-            if (IsAnyPopupOpen?.Invoke() == true)
-                return;
-
-            Engine.UpdateAllMeters();
-            MonitorMasterPeakL = Engine.MonitorPeakLeft;
-            MonitorMasterPeakR = Engine.MonitorPeakRight;
-            StreamMasterPeakL = Engine.StreamPeakLeft;
-            StreamMasterPeakR = Engine.StreamPeakRight;
-        };
-        _meterTimer.Start();
+        CompositionTarget.Rendering += OnRenderingMeters;
 
         _sessionPollTimer = new DispatcherTimer
         {
@@ -1553,9 +1541,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ConfigService.Save(Config);
     }
 
+    // Runs once per rendered frame (not while the window is hidden), so meters move at the display's frame rate
+    private void OnRenderingMeters(object? sender, object e)
+    {
+        TimeSpan now = (e as RenderingEventArgs)?.RenderingTime ?? TimeSpan.Zero;
+        double elapsedMs = (now - _lastMeterFrame).TotalMilliseconds;
+        if (elapsedMs < MinMeterIntervalMs && elapsedMs >= 0)
+            return;
+        _lastMeterFrame = now;
+
+        if (IsAnyPopupOpen?.Invoke() == true)
+            return;
+
+        Engine.UpdateAllMeters(Math.Clamp(elapsedMs, 0.0, 100.0));
+        MonitorMasterPeakL = Engine.MonitorPeakLeft;
+        MonitorMasterPeakR = Engine.MonitorPeakRight;
+        StreamMasterPeakL = Engine.StreamPeakLeft;
+        StreamMasterPeakR = Engine.StreamPeakRight;
+    }
+
     public void Dispose()
     {
-        _meterTimer.Stop();
+        CompositionTarget.Rendering -= OnRenderingMeters;
         _sessionPollTimer.Stop();
         SaveConfig();
         Hotkeys.Dispose();

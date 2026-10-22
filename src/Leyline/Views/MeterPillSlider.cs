@@ -22,6 +22,7 @@ public sealed class MeterPillSlider : Grid
     private readonly Border _unityTick;
     private readonly Ellipse _thumb;
     private bool _isDragging;
+    private double _meterInnerMax;
 
     public static readonly DependencyProperty ValueProperty =
         DependencyProperty.Register(
@@ -35,14 +36,14 @@ public sealed class MeterPillSlider : Grid
             nameof(MeterLeft),
             typeof(double),
             typeof(MeterPillSlider),
-            new PropertyMetadata(0.0, OnVisualStateChanged));
+            new PropertyMetadata(0.0, OnMeterChanged));
 
     public static readonly DependencyProperty MeterRightProperty =
         DependencyProperty.Register(
             nameof(MeterRight),
             typeof(double),
             typeof(MeterPillSlider),
-            new PropertyMetadata(0.0, OnVisualStateChanged));
+            new PropertyMetadata(0.0, OnMeterChanged));
 
     public static readonly DependencyProperty IsMutedThemeProperty =
         DependencyProperty.Register(
@@ -149,6 +150,26 @@ public sealed class MeterPillSlider : Grid
             slider.UpdateVisuals();
     }
 
+    // Meters change every frame: only the bar widths move (colors and layout are set in UpdateVisuals)
+    private static void OnMeterChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is MeterPillSlider slider)
+            slider.UpdateMeterBars();
+    }
+
+    private void UpdateMeterBars()
+    {
+        if (_meterInnerMax <= 0)
+            return;
+
+        _meterBarLeft.Width = Math.Clamp(MeterLeft, 0.0, 1.0) * _meterInnerMax;
+        _meterBarRight.Width = Math.Clamp(MeterRight, 0.0, 1.0) * _meterInnerMax;
+
+        var tickVisibility = MeterLeft > 0.01 || MeterRight > 0.01 ? Visibility.Visible : Visibility.Collapsed;
+        if (_unityTick.Visibility != tickVisibility)
+            _unityTick.Visibility = tickVisibility;
+    }
+
     private void UpdateVisuals()
     {
         double w = ActualWidth;
@@ -178,28 +199,15 @@ public sealed class MeterPillSlider : Grid
 
         _thumb.Margin = new Thickness(thumbX, 0, 0, 0);
 
-        double innerMax = Math.Max(0.0, w - 6.0);
-        double lWidth = Math.Clamp(MeterLeft, 0.0, 1.0) * innerMax;
-        double rWidth = Math.Clamp(MeterRight, 0.0, 1.0) * innerMax;
-
-        _meterBarLeft.Width = lWidth;
+        _meterInnerMax = Math.Max(0.0, w - 6.0);
         Canvas.SetLeft(_meterBarLeft, 3.0);
         Canvas.SetTop(_meterBarLeft, 1.8);
-
-        _meterBarRight.Width = rWidth;
         Canvas.SetLeft(_meterBarRight, 3.0);
         Canvas.SetTop(_meterBarRight, 6.0);
+        Canvas.SetLeft(_unityTick, Math.Max(3.0, w * 0.52));
+        Canvas.SetTop(_unityTick, 2.0);
 
-        if (MeterLeft > 0.01 || MeterRight > 0.01)
-        {
-            _unityTick.Visibility = Visibility.Visible;
-            Canvas.SetLeft(_unityTick, Math.Max(3.0, w * 0.52));
-            Canvas.SetTop(_unityTick, 2.0);
-        }
-        else
-        {
-            _unityTick.Visibility = Visibility.Collapsed;
-        }
+        UpdateMeterBars();
     }
 
     private void SetValueFromPointer(Point pt)

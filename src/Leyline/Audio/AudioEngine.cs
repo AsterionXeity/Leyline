@@ -455,18 +455,26 @@ public sealed class AudioEngine : IDisposable
         }
     }
 
-    public void UpdateAllMeters()
+    /// <summary>
+    /// Decays and publishes all meters; <paramref name="elapsedMs"/> since the last call keeps the fall-off speed
+    /// the same at any UI frame rate (the decay factors were tuned for 30 updates per second).
+    /// </summary>
+    public void UpdateAllMeters(double elapsedMs)
     {
+        double ticks = elapsedMs / 33.3;
+        float channelDecay = (float)Math.Pow(0.84, ticks);
+        float masterDecay = (float)Math.Pow(0.88, ticks);
+
         lock (_engineLock)
         {
             foreach (var ch in _channels)
             {
-                ch.DecayAndPublishMeters();
+                ch.DecayAndPublishMeters(channelDecay);
             }
-            _personalMasterProvider.DecayMeters();
-            _streamMasterProvider.DecayMeters();
-            _discordMasterProvider.DecayMeters();
-            _micRecMasterProvider.DecayMeters();
+            _personalMasterProvider.DecayMeters(masterDecay);
+            _streamMasterProvider.DecayMeters(masterDecay);
+            _discordMasterProvider.DecayMeters(masterDecay);
+            _micRecMasterProvider.DecayMeters(masterDecay);
         }
     }
 
@@ -618,10 +626,10 @@ public sealed class AudioEngine : IDisposable
             return _monitorTap.ToSampleProvider();
         }
 
-        public void DecayMeters()
+        public void DecayMeters(float decay)
         {
-            SmoothedPeakLeft *= 0.88f;
-            SmoothedPeakRight *= 0.88f;
+            SmoothedPeakLeft *= decay;
+            SmoothedPeakRight *= decay;
             if (SmoothedPeakLeft < 0.0005f) SmoothedPeakLeft = 0f;
             if (SmoothedPeakRight < 0.0005f) SmoothedPeakRight = 0f;
         }
