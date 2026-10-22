@@ -1,0 +1,164 @@
+;
+; LeylineVAD.inf - Leyline Virtual Audio (one virtual cable).
+;
+; Derived from the Microsoft SysVAD sample (ComponentizedAudioSample.inx), MS-PL.
+; One root-enumerated device exposing a render endpoint whose audio is looped to a capture endpoint.
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = MEDIA
+Provider    = %ProviderName%
+ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+DriverVer   = 10/22/2026, 0.1.0.0
+CatalogFile = LeylineVAD.cat
+PnpLockDown = 1
+
+[SourceDisksNames]
+222 = %DiskName%,"",222
+
+[SourceDisksFiles]
+LeylineVAD.sys = 222
+
+[Manufacturer]
+%MfgName% = Leyline,NT$ARCH$.10.0...19041
+
+[Leyline.NT$ARCH$.10.0...19041]
+%Leyline.DeviceDesc% = LeylineVAD, Root\LeylineVAD
+
+[DestinationDirs]
+LeylineVAD.CopyList = 13 ; 13 = package's DriverStore directory
+
+;======================================================
+; Device
+;======================================================
+[LeylineVAD.CopyList]
+LeylineVAD.sys
+
+[LeylineVAD.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,LeylineVAD.sys
+
+HKR,Drivers,SubClasses,,"wave,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%Leyline.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%Leyline.DeviceDesc%
+
+; Name shown for the capture side of the cable (the mic-in pin's name GUID).
+HKR,%MEDIA_CATEGORIES%\%MicInCustomNameGUID%,Name,,%Leyline.CableCaptureName%
+
+[LeylineVAD.NT]
+Include = ks.inf,wdmaudio.inf
+Needs   = KS.Registration, WDMAUDIO.Registration
+CopyFiles = LeylineVAD.CopyList
+AddReg    = LeylineVAD.AddReg
+
+[LeylineVAD.NT.Interfaces]
+; Cable render side (SysVAD HDMI filter: no offload pin)
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_WaveCableRender%,     Leyline.I.WaveCableRender
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_WaveCableRender%,     Leyline.I.WaveCableRender
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_WaveCableRender%,     Leyline.I.WaveCableRender
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_TopologyCableRender%, Leyline.I.TopologyCableRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_TopologyCableRender%, Leyline.I.TopologyCableRender
+
+; Cable capture side
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_WaveMicIn%,       Leyline.I.WaveMicIn
+AddInterface = %KSCATEGORY_CAPTURE%,  %KSNAME_WaveMicIn%,       Leyline.I.WaveMicIn
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_WaveMicIn%,       Leyline.I.WaveMicIn
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_TopologyMicIn%,   Leyline.I.TopologyMicIn
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_TopologyMicIn%,   Leyline.I.TopologyMicIn
+
+[LeylineVAD.NT.Services]
+AddService = LeylineVAD,0x00000002,LeylineVAD.Service
+
+[LeylineVAD.Service]
+DisplayName   = %Leyline.SvcDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %13%\LeylineVAD.sys
+
+[LeylineVAD.NT.HW]
+AddReg = LeylineVAD.HW.AddReg
+
+[LeylineVAD.HW.AddReg]
+; FILE_DEVICE_SOUND
+HKR,,DeviceType,0x10001,0x0000001D
+; SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_RWX_RES_RWX
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GRGWGX;;;BA)(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)"
+
+[LeylineVAD.NT.Wdf]
+KmdfService = LeylineVAD, LeylineVAD.WdfSect
+
+[LeylineVAD.WdfSect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+;======================================================
+; Interfaces
+;======================================================
+[Leyline.I.WaveCableRender]
+AddReg = Leyline.I.WaveCableRender.AddReg
+
+[Leyline.I.WaveCableRender.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+
+[Leyline.I.TopologyCableRender]
+AddReg = Leyline.I.TopologyCableRender.AddReg
+
+[Leyline.I.TopologyCableRender.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+; Pull (event-driven) mode
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+[Leyline.I.WaveMicIn]
+AddReg = Leyline.I.WaveMicIn.AddReg
+
+[Leyline.I.WaveMicIn.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+
+[Leyline.I.TopologyMicIn]
+AddReg = Leyline.I.TopologyMicIn.AddReg
+
+[Leyline.I.TopologyMicIn.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+; Pull (event-driven) mode
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+;======================================================
+; Strings
+;======================================================
+[Strings]
+; Non-localizable
+KSNAME_WaveCableRender    = "WaveHdmi"
+KSNAME_TopologyCableRender= "TopologyHdmi"
+KSNAME_WaveMicIn      = "WaveMicIn"
+KSNAME_TopologyMicIn  = "TopologyMicIn"
+
+Proxy.CLSID          = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE   = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME  = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY  = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY       = "{00000000-0000-0000-0000-000000000000}"
+
+PKEY_AudioEndpoint_Association               = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"
+
+MEDIA_CATEGORIES    = "MediaCategories"
+MicInCustomNameGUID = {d48deb08-fd1c-4d1e-b821-9064d49ae96e}
+
+; Localizable
+ProviderName             = "Leyline"
+MfgName                  = "Leyline"
+DiskName                 = "Leyline Virtual Audio Driver Disk"
+Leyline.DeviceDesc       = "Leyline Virtual Audio"
+Leyline.SvcDesc          = "Leyline Virtual Audio Driver"
+Leyline.CableCaptureName = "Leyline Cable"

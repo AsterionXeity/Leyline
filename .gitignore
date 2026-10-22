@@ -18,3 +18,8 @@ Thumbs.db
 *.tmp
 *.bak
 voidpatch-audio-router-development.json
+
+# Leyline driver build: restored WDK NuGet packages and build output
+driver/LeylineVAD/packages/
+driver/LeylineVAD/src/**/x64/
+driver/LeylineVAD/out/
