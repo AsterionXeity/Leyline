@@ -1,6 +1,6 @@
-# VoidPatch  Virtual Audio Router (Alpha) 
+# Leyline  Virtual Audio Router (Alpha) 
 
-**VoidPatch** is a native Windows 10 & Windows 11 studio audio routing and mixing application inspired by Elgato Wave Link.
+**Leyline** is a native Windows 10 & Windows 11 studio audio routing and mixing application inspired by Elgato Wave Link.
 
 ## Key Features
 
