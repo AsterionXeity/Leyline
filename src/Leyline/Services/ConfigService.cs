@@ -32,8 +32,7 @@ public static class ConfigService
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
                 if (cfg != null && cfg.Channels.Count > 0)
                 {
-                    if (cfg.SoundPads.Count == 0)
-                        cfg.SoundPads = SampleGenerator.EnsureDefaultPads();
+                    RemoveSoundboardChannels(cfg);
                     if (cfg.MixBuses.Count == 0)
                         cfg.MixBuses = CreateDefaultMixBuses();
                     return cfg;
@@ -49,13 +48,18 @@ public static class ConfigService
         return defaultConfig;
     }
 
+    private static string? _lastSavedJson;
+
     public static void Save(AppConfig config)
     {
         try
         {
             string path = GetConfigFilePath();
             string json = JsonSerializer.Serialize(config, JsonOptions);
+            if (json == _lastSavedJson && File.Exists(path))
+                return;   // auto-save runs after every change; skip rewriting an identical file
             File.WriteAllText(path, json);
+            _lastSavedJson = json;
         }
         catch
         {
@@ -109,8 +113,7 @@ public static class ConfigService
             }
             if (cfg.MixBuses.Count == 0)
                 cfg.MixBuses = CreateDefaultMixBuses();
-            if (cfg.SoundPads.Count == 0)
-                cfg.SoundPads = SampleGenerator.EnsureDefaultPads();
+            RemoveSoundboardChannels(cfg);
 
             importedConfig = cfg;
             return true;
@@ -145,9 +148,12 @@ public static class ConfigService
         AddAppGroupRow(config, devices, "System", "🖥️", "#29B6F6", "System",
             personal: true, stream: false, discord: false, micRec: false, []);
 
-        config.SoundPads = SampleGenerator.EnsureDefaultPads();
         return config;
     }
+
+    // The soundboard was removed; its channel has no source anymore (older configs' pads are ignored on load)
+    private static void RemoveSoundboardChannels(AppConfig config) =>
+        config.Channels.RemoveAll(c => c.SourceType == ChannelSourceType.SoundboardChannel);
 
     public static ChannelStripModel CreatePresetChannel(string presetKey, IReadOnlyList<AudioDeviceInfo> devices)
     {
@@ -175,17 +181,11 @@ public static class ConfigService
             case "obs":
             case "obs/stream":
             case "stream mix":
-                AddAppGroupRow(tempConfig, devList, "OBS/Stream", "📺", "#37474F", "Stream Mix",
+                AddAppGroupRow(tempConfig, devList, "OBS/Stream", "📺", "#37474F", "",
                     personal: true, stream: true, discord: false, micRec: false,
                     [
                         new AssignedAppModel { AppName = "OBS Studio", ProcessName = "obs64", IconEmoji = "📺" }
                     ]);
-                return tempConfig.Channels[0];
-
-            case "mic fx":
-                AddAppGroupRow(tempConfig, devList, "Mic FX", "🎙️", "#26A69A", "Mic FX",
-                    personal: false, stream: true, discord: true, micRec: true,
-                    []);
                 return tempConfig.Channels[0];
 
             case "game":
@@ -206,29 +206,13 @@ public static class ConfigService
 
             case "voice":
             case "voice chat":
-                AddAppGroupRow(tempConfig, devList, "Voice Chat", "💬", "#FBC02D", "Voice",
+                AddAppGroupRow(tempConfig, devList, "Voice Chat", "💬", "#FBC02D", "VoiceChat",
                     personal: true, stream: true, discord: true, micRec: false,
                     [
                         new AssignedAppModel { AppName = "Discord", ProcessName = "Discord", IconEmoji = "💬" }
                     ],
                     streamMuted: true);
                 return tempConfig.Channels[0];
-
-            case "soundboard":
-                return new ChannelStripModel
-                {
-                    Name = "Soundboard",
-                    Icon = "〰️",
-                    AccentHex = "#FF7043",
-                    SourceType = ChannelSourceType.SoundboardChannel,
-                    DeviceId = string.Empty,
-                    DeviceName = "Leyline Built-in Sampler",
-                    InputVolume = 0.90f,
-                    PersonalMix = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
-                    StreamMix   = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
-                    DiscordMix  = new MixSendState { IsEnabled = false, Volume = 0.80f, IsMuted = false },
-                    MicRecMix   = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false }
-                };
 
             case "microphone":
             default:
@@ -258,7 +242,7 @@ public static class ConfigService
         string name,
         string icon,
         string accentHex,
-        string keyword,
+        string cableId,
         bool personal,
         bool stream,
         bool discord,
@@ -267,11 +251,8 @@ public static class ConfigService
         bool streamMuted = false,
         bool micRecMuted = false)
     {
-        // Only match Leyline's own virtual driver endpoints (never Elgato)
-        var vpVirt = devices.FirstOrDefault(d =>
-            d.Kind != AudioEndpointKind.CaptureInput &&
-            LeylineDriverService.IsLeylineEndpoint(d.Name) &&
-            d.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        // The channel's cable is connected and its endpoint resolved when the channel is added (MainViewModel).
+        var cable = LeylineCableService.Find(cableId);
 
         var strip = new ChannelStripModel
         {
@@ -279,8 +260,9 @@ public static class ConfigService
             Icon = icon,
             AccentHex = accentHex,
             SourceType = ChannelSourceType.AppGroupChannel,
-            DeviceId = vpVirt?.Id ?? string.Empty,
-            DeviceName = vpVirt?.Name ?? "None (Direct App Capture)",
+            CableId = cable?.Id ?? string.Empty,
+            DeviceId = string.Empty,
+            DeviceName = cable != null ? $"{cable.DisplayName} ({LeylineDriverService.DeviceName})" : "None (Direct App Capture)",
             InputVolume = 0.90f,
             PersonalMix = new MixSendState { IsEnabled = personal, Volume = 0.85f, IsMuted = false },
             StreamMix   = new MixSendState { IsEnabled = stream,   Volume = 0.80f, IsMuted = streamMuted },

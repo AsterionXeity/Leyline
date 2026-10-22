@@ -7,7 +7,8 @@ public enum VstPluginStatus
 {
     ScannedOk = 0,
     BrokenCrashed = 1,
-    VirtualInstrument = 2
+    VirtualInstrument = 2,
+    NotAPlugin = 3      // exports a VST entry point but has no audio plugin (cached so it is not probed again)
 }
 
 public sealed class VstPluginInfo : ObservableObject

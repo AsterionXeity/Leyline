@@ -10,6 +10,8 @@ $ErrorActionPreference = 'Stop'
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.Windows.DriverKit -property installationPath
+# CI images may register the WDK without the DriverKit component; fall back to the newest Visual Studio.
+if (-not $vs) { $vs = & $vswhere -latest -products * -property installationPath }
 Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
 Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 

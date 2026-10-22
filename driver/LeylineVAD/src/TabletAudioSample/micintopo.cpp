@@ -289,15 +289,15 @@ PropertyHandler_LeylineCaptureTopoFilter
 }
 
 //=============================================================================
-#pragma code_seg("PAGE")
+// Not pageable: port class calls event handlers at raised IRQL (e.g. PCEVENT_VERB_REMOVE when a client
+// closes the filter). Only PCEVENT_VERB_ADD, which runs at PASSIVE_LEVEL, calls into paged code.
+#pragma code_seg()
 NTSTATUS
 EventHandler_LeylineCaptureTopoFilter
 (
     _In_ PPCEVENT_REQUEST EventRequest
 )
 {
-    PAGED_CODE();
-
     PCMiniportTopology pMiniport = (PCMiniportTopology)EventRequest->MajorTarget;
 
     return LeylineTopoEventHandler(EventRequest, pMiniport);

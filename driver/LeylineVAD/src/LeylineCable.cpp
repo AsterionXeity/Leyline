@@ -35,7 +35,10 @@ typedef struct _LEYLINE_FRAME
 
 // Reader lag, in milliseconds. A reader further behind than the maximum is moved up to the target
 // so latency cannot build up (e.g. after the capture side stalls).
-#define LEYLINE_CABLE_TARGET_LAG_MS     20
+// Both sides move data in bursts on their own 10 ms notification timers, so the reader needs up to about
+// one period of lag. When it runs out it records silence for the gap and keeps that much more lag, so a
+// target below the worst case only costs a gap early in a recording.
+#define LEYLINE_CABLE_TARGET_LAG_MS     10
 #define LEYLINE_CABLE_MAX_LAG_MS        200
 
 // Topology filters per cable that report a jack (render + capture).

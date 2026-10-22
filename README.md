@@ -8,21 +8,17 @@
    - Every input channel strip has independent **🎧 Monitor Mix** (personal headphones/speakers) and **📡 Stream Mix** (virtual broadcast output) faders, mute buttons, fader-link toggle, and real-time stereo L/R peak meters.
    - Built-in **Stream Mix WAV Recorder** (`My Documents\Leyline Recordings`).
 
-2. **Virtual Audio Device Routing (Primary) & Process Loopback Fallback (Windows 10 & 11)**
-   - **Automatic Virtual Endpoint Routing**: Choosing an application (`Chrome`, `Spotify`, `Discord`, `Games`, `OBS`, etc.) in Leyline's menus automatically binds the channel to its corresponding `Leyline ... (Leyline Virtual Audio)` playback device and routes the application's Windows output directly to that virtual endpoint via `IAudioPolicyConfigFactory` (`PolicyConfigClient.SetApplicationOutputEndpoint`). Removing an app or channel automatically restores it to the Windows Default Output.
-   - **Direct Process Capture Fallback**: Retains Windows 10 (2004+) / Windows 11 `ActivateAudioInterfaceAsync` (`VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`) as a zero-driver fallback when the virtual audio endpoints are not yet installed.
+2. **Virtual Audio Cables & App Routing (Windows 10 2004+ & 11)**
+   - Each channel uses a Leyline virtual cable. Assigning an application (`Chrome`, `Spotify`, `Discord`, games, ...) to a channel routes its Windows output to the cable's playback side (`IAudioPolicyConfigFactory`), and Leyline records the cable's other side. Removing an app or channel restores it to the Windows default output.
+   - **Process capture fallback**: channels without a cable (or without the driver) capture their apps directly with `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`.
 
-3. **Leyline Virtual Audio Driver & Endpoint Provisioner**
-   - Includes the **Leyline Virtual Audio Driver Manager** (under the **⚡ VST & VIRTUAL DRIVER** tab and `driver\LeylineVAD\`) which provisions and brands your Windows CoreAudio virtual buses as:
-     - `Leyline System (Leyline Virtual Audio)`
-     - `Leyline Game (Leyline Virtual Audio)`
-     - `Leyline Browser (Leyline Virtual Audio)`
-     - `Leyline Music (Leyline Virtual Audio)`
-     - `Leyline Voice Chat (Leyline Virtual Audio)`
-     - `Leyline Stream Mix (Leyline Virtual Audio)`
-     - `Leyline Mic FX (Leyline Virtual Audio)`
-   - Includes 1-click backup & restore to original endpoint names at any time.
-   - Complete WDM/WaveRT kernel driver source & INF package included in `G:\Leyline\driver\LeylineVAD\`.
+3. **Leyline Virtual Audio Driver**
+   - Leyline's own WDM/WaveRT driver (`driver\LeylineVAD\`, based on the Microsoft SysVAD sample): **one device, one virtual cable per bus**, named like Elgato Wave Link's:
+     - `System`, `Game`, `Browser`, `Music`, `Voice Chat` (Leyline Virtual Audio) — channel inputs
+     - `Stream Mix (Leyline Virtual Audio)` — the Stream Mix, for OBS to record
+     - `Microphone (Leyline Virtual Audio)` — the Mic Rec mix (your processed mic), for Discord and other voice apps
+   - Cables show as **Disconnected** in Windows until a channel uses them; Leyline connects and disconnects them as you add and remove channels.
+   - 16-bit stereo at 48 or 96 kHz on either side of a cable.
 
 4. **VST2 / VST3 Hosting + Zero-Latency**
    - **Built-in Studio DSP Rack** on every channel strip & master bus:
@@ -38,8 +34,25 @@
    - ~~Pre-loaded with 8 synthesized studio sound effects (`MLG Airhorn`, `Censor Beep`, `Sub Bass Drop`, `Ba-Dum Tss`, `Victory Fanfare`, `Sci-Fi Laser`, `8-Bit Coin`, `Dramatic Hit`) and~~ supports `.wav`, `.mp3`, `.ogg`, `.flac`, and `.m4a`.
    - Per-pad volume, playback mode (`Stop Toggle`, `One-Shot`, `Overlap`, `Loop`), independent Monitor/Stream routing, and system-wide **Global Hotkeys** (`Ctrl+Shift+1..8`, `Ctrl+Shift+0` Panic Stop).
 
-## Running & Installing
+## Installing
 
-- **Launch App**: `G:\Leyline\publish\Leyline.exe` (or via the **Leyline** shortcut on your Desktop / Start Menu)
-- **Re-run Installer**: `powershell -ExecutionPolicy Bypass -File G:\Leyline\Install-Leyline.ps1`
-- **Brand Virtual Audio Driver Endpoints**: Click **⚡ Brand & Activate Leyline Audio Endpoints (UAC)** inside the **VST & VIRTUAL DRIVER** tab, or run `G:\Leyline\driver\LeylineVAD\Install-LeylineDriver.ps1`.
+1. Download **`Leyline-Setup.exe`** from the [latest release](https://github.com/AsterionXeity/Leyline/releases) and run it.
+2. On first launch Leyline asks to install its virtual audio driver (one administrator approval). When an update ships a newer driver, Leyline asks again to update it. Settings → **Leyline Virtual Audio Driver** can install or remove it at any time.
+
+The driver is currently **test-signed**, so Windows only loads it with test signing on. Before installing the driver, run this in an administrator terminal and reboot:
+
+```
+bcdedit /set testsigning on
+```
+
+## Building
+
+- **App**: `dotnet build src/Leyline/Leyline.csproj -c Debug -p:Platform=x64`
+- **Driver** (Visual Studio 2022/2026 with the Windows Driver Kit):
+  ```
+  nuget restore driver/LeylineVAD/packages.config -PackagesDirectory driver/LeylineVAD/packages
+  driver/LeylineVAD/Build-Driver.ps1
+  driver/LeylineVAD/Package-Driver.ps1
+  ```
+  The app bundles `driver/LeylineVAD/out/<Configuration>` in its `Driver\` folder. Bump `LeylineDriverVersion` in `driver/LeylineVAD/Directory.Build.props` whenever the driver changes, so installed copies are offered the update.
+- **Installer**: GitHub Actions (`.github/workflows/build-release.yml`) builds the driver, the app and `Leyline-Setup.exe` (Inno Setup, `installer/Leyline.iss`) on every push to `main` and every `v*` tag.

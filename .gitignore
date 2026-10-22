@@ -23,3 +23,4 @@ voidpatch-audio-router-development.json
 driver/LeylineVAD/packages/
 driver/LeylineVAD/src/**/x64/
 driver/LeylineVAD/out/
+dist/

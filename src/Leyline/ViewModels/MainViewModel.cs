@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Leyline.Audio;
 using Leyline.Models;
 using Leyline.Services;
@@ -13,7 +14,17 @@ namespace Leyline.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly DispatcherQueue? _dispatcherQueue;
-    private readonly DispatcherTimer _meterTimer;
+    private readonly ConfigAutoSaver? _autoSaver;
+
+    // View-model settings that write straight to Config without saving it
+    private static readonly HashSet<string> AutoSavedViewModelProperties =
+    [
+        nameof(MonitorMasterVolume), nameof(StreamMasterVolume),
+        nameof(IsMonitorMasterMuted), nameof(IsStreamMasterMuted)
+    ];
+    // Meters update on the UI's frame callback, at most this often (120 per second)
+    private const double MinMeterIntervalMs = 8.0;
+    private TimeSpan _lastMeterFrame;
     private readonly DispatcherTimer _sessionPollTimer;
 
     private AudioDeviceInfo? _selectedMonitorDevice;
@@ -25,6 +36,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _statusBannerText = "Leyline Audio Engine Active • 48kHz / 32-bit Float";
     private bool _isRecordingStream;
     private bool _isDriverBranded;
+    private bool _driverNeedsAttention;
+    private string _driverActionText = "Install Leyline Virtual Audio Driver (UAC)";
     private string _driverStatusText = "Checking Leyline Virtual Audio Driver...";
     private int _selectedTabIndex;
     private int _listeningMixIndex;
@@ -38,6 +51,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // Channel Configuration Modal State (Screenshot 2)
     private bool _isChannelConfigModalOpen;
     private ChannelStripModel? _selectedConfigChannel;
+    private bool _isMixConfigModalOpen;
+    private OutputMixBusModel? _selectedConfigMix;
+    private int _selectedConfigMixIndex = -1;
+    private string _selectedMixMainOutputText = string.Empty;
+
+    // The engine has four mixes (Personal, Stream, Discord Record, Mic Rec); custom mixes have no outputs yet
+    private const int EngineMixCount = 4;
     private int _selectedChannelConfigTabIndex; // 0: Apps, 1: Audio effects
     private bool _isAddAppPickerOpen;
 
@@ -46,13 +66,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public AudioEngine Engine { get; }
     public AppConfig Config { get; private set; }
-    public GlobalHotkeyService Hotkeys { get; }
+    public TrayIconService Tray { get; }
     public Func<bool>? IsAnyPopupOpen { get; set; }
     private bool _isPollingSessions;
 
     public ObservableCollection<OutputMixBusModel> MixBuses { get; } = new();
     public ObservableCollection<ChannelStripModel> Channels { get; } = new();
-    public ObservableCollection<SoundPadModel> SoundPads { get; } = new();
 
     // Strictly separated device lists (with "None / Unselected" at index 0)
     public ObservableCollection<AudioDeviceInfo> AllDevices { get; } = new();
@@ -109,6 +128,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     MixBuses[i].IsListeningTarget = (i == _listeningMixIndex);
 
                 Engine.SetListeningMixIndex(_listeningMixIndex);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -172,6 +192,142 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _selectedConfigChannel, value);
     }
 
+    // ---- Mix settings window (pencil on a mix header): name, icon, extra outputs ----
+
+    public bool IsMixConfigModalOpen
+    {
+        get => _isMixConfigModalOpen;
+        set => SetProperty(ref _isMixConfigModalOpen, value);
+    }
+
+    public OutputMixBusModel? SelectedConfigMix
+    {
+        get => _selectedConfigMix;
+        private set => SetProperty(ref _selectedConfigMix, value);
+    }
+
+    /// <summary>Where the selected mix plays without extra outputs (listening device, its cable).</summary>
+    public string SelectedMixMainOutputText
+    {
+        get => _selectedMixMainOutputText;
+        private set => SetProperty(ref _selectedMixMainOutputText, value);
+    }
+
+    public ObservableCollection<AudioDeviceInfo> SelectedMixExtraOutputs { get; } = new();
+
+    /// <summary>Output devices that can be added to the selected mix.</summary>
+    public ObservableCollection<AudioDeviceInfo> MixOutputChoices { get; } = new();
+
+    public bool SelectedMixHasNoExtraOutputs => SelectedMixExtraOutputs.Count == 0;
+
+    public void OpenMixConfig(int mixIndex)
+    {
+        if (mixIndex < 0 || mixIndex >= MixBuses.Count)
+            return;
+        _selectedConfigMixIndex = mixIndex;
+        SelectedConfigMix = MixBuses[mixIndex];
+        RefreshMixConfigLists();
+        IsMixConfigModalOpen = true;
+    }
+
+    public void CloseMixConfig()
+    {
+        IsMixConfigModalOpen = false;
+        SaveConfig();
+    }
+
+    public void AddMixExtraOutput(string deviceId)
+    {
+        if (SelectedConfigMix is not { } mix || string.IsNullOrWhiteSpace(deviceId) ||
+            mix.ExtraOutputDeviceIds.Contains(deviceId, StringComparer.OrdinalIgnoreCase))
+            return;
+        mix.ExtraOutputDeviceIds.Add(deviceId);
+        ApplyMixExtraOutputs(_selectedConfigMixIndex);
+        RefreshMixConfigLists();
+    }
+
+    public void RemoveMixExtraOutput(string deviceId)
+    {
+        if (SelectedConfigMix is not { } mix)
+            return;
+        var existing = mix.ExtraOutputDeviceIds.FirstOrDefault(id => id.Equals(deviceId, StringComparison.OrdinalIgnoreCase));
+        if (existing == null)
+            return;
+        mix.ExtraOutputDeviceIds.Remove(existing);
+        ApplyMixExtraOutputs(_selectedConfigMixIndex);
+        RefreshMixConfigLists();
+    }
+
+    // Saved extra outputs of every mix (startup, configuration import)
+    private void ApplyAllMixExtraOutputs()
+    {
+        for (int i = 0; i < EngineMixCount; i++)
+            Engine.SetMixExtraOutputs(i, i < MixBuses.Count ? MixBuses[i].ExtraOutputDeviceIds : []);
+        UpdateMixOutputCounts();
+    }
+
+    private void ApplyMixExtraOutputs(int mixIndex)
+    {
+        if (mixIndex >= 0 && mixIndex < Math.Min(EngineMixCount, MixBuses.Count))
+            Engine.SetMixExtraOutputs(mixIndex, MixBuses[mixIndex].ExtraOutputDeviceIds);
+        UpdateMixOutputCounts();
+    }
+
+    /// <summary>Refreshes each mix header's "N outputs" from what the engine is playing to.</summary>
+    public void UpdateMixOutputCounts()
+    {
+        for (int i = 0; i < MixBuses.Count; i++)
+            MixBuses[i].OutputCount = i < EngineMixCount ? Engine.GetMixOutputCount(i) : 0;
+    }
+
+    private void RefreshMixConfigLists()
+    {
+        if (SelectedConfigMix is not { } mix)
+            return;
+        int index = _selectedConfigMixIndex;
+
+        // Physical outputs only: playing a mix into a Leyline cable would feed it back into a channel
+        var outputs = AudioEngine.EnumerateDevices().Where(d => d.Kind == AudioEndpointKind.RenderOutput).ToList();
+
+        SelectedMixExtraOutputs.Clear();
+        foreach (string id in mix.ExtraOutputDeviceIds)
+        {
+            SelectedMixExtraOutputs.Add(outputs.FirstOrDefault(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+                                        ?? new AudioDeviceInfo { Id = id, Name = "Disconnected device", Kind = AudioEndpointKind.RenderOutput });
+        }
+        OnPropertyChanged(nameof(SelectedMixHasNoExtraOutputs));
+
+        string listeningId = index == ListeningMixIndex ? Config.MonitorOutputDeviceId : string.Empty;
+        MixOutputChoices.Clear();
+        foreach (var device in outputs)
+        {
+            if (!mix.ExtraOutputDeviceIds.Contains(device.Id, StringComparer.OrdinalIgnoreCase) &&
+                !device.Id.Equals(listeningId, StringComparison.OrdinalIgnoreCase))
+                MixOutputChoices.Add(device);
+        }
+
+        var lines = new List<string>();
+        if (index == ListeningMixIndex)
+        {
+            lines.Add(_selectedMonitorDevice is { IsNone: false } monitor
+                ? $"You're listening to this mix on {monitor.Name}."
+                : "You're listening to this mix, but no listening device is selected (top right).");
+        }
+        if (index == 1)
+        {
+            lines.Add(_selectedStreamDevice is { IsNone: false } stream
+                ? $"Plays to {stream.Name}."
+                : $"Plays to Stream Mix ({LeylineDriverService.DeviceName}) for OBS and other recording apps.");
+        }
+        if (index == 3)
+            lines.Add($"Plays to Microphone ({LeylineDriverService.DeviceName}), the microphone for Discord and other voice apps.");
+        if (index >= EngineMixCount)
+            lines.Add("Custom mixes don't play anywhere yet.");
+        if (lines.Count == 0)
+            lines.Add("Click the mix to listen to it, or add an output below.");
+        SelectedMixMainOutputText = string.Join("\n", lines);
+    }
+
     public int SelectedChannelConfigTabIndex
     {
         get => _selectedChannelConfigTabIndex;
@@ -200,6 +356,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 string id = value?.Id ?? string.Empty;
                 Config.MonitorOutputDeviceId = id;
                 Engine.SetMonitorOutputDevice(id);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -215,6 +372,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 string id = value?.Id ?? string.Empty;
                 Config.StreamOutputDeviceId = id;
                 Engine.SetStreamOutputDevice(id);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -271,21 +429,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged();
         }
     }
-
-    public float SoundboardMasterVolume
-    {
-        get => Engine.Soundboard.MasterVolume;
-        set
-        {
-            float clamped = Math.Clamp(value, 0f, 1.5f);
-            Engine.Soundboard.MasterVolume = clamped;
-            Config.SoundboardMasterVolume = clamped;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SoundboardMasterPercent));
-        }
-    }
-
-    public int SoundboardMasterPercent => (int)Math.Round(SoundboardMasterVolume * 100f);
 
     public float MonitorMasterPeakL
     {
@@ -359,12 +502,36 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _driverStatusText, value);
     }
 
+    /// <summary>True when the driver is missing, outdated or not running: the startup prompt is shown.</summary>
+    public bool DriverNeedsAttention
+    {
+        get => _driverNeedsAttention;
+        set => SetProperty(ref _driverNeedsAttention, value);
+    }
+
+    public string DriverActionText
+    {
+        get => _driverActionText;
+        set => SetProperty(ref _driverActionText, value);
+    }
+
     public bool MinimizeToTrayOnClose
     {
         get => Config.MinimizeToTrayOnClose;
         set
         {
             Config.MinimizeToTrayOnClose = value;
+            OnPropertyChanged();
+            SaveConfig();
+        }
+    }
+
+    public bool ShowNotifications
+    {
+        get => Config.ShowNotifications;
+        set
+        {
+            Config.ShowNotifications = value;
             OnPropertyChanged();
             SaveConfig();
         }
@@ -389,8 +556,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand CloseSettingsCommand { get; }
     public RelayCommand RefreshDevicesCommand { get; }
     public RelayCommand RefreshAppsCommand { get; }
-    public RelayCommand StopAllSoundsCommand { get; }
-    public RelayCommand TriggerPadCommand { get; }
     public RelayCommand ToggleMonitorMuteCommand { get; }
     public RelayCommand ToggleStreamMuteCommand { get; }
     public RelayCommand ToggleChannelInputMuteCommand { get; }
@@ -414,7 +579,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // Create Channel Popover Commands (Screenshot 3)
     public RelayCommand ToggleCreateChannelPopoverCommand { get; }
     public RelayCommand CreateChannelFromInputDeviceCommand { get; }
-    public RelayCommand CreateSoundboardChannelCommand { get; }
     public RelayCommand CreateChannelFromActiveAppCommand { get; }
     public RelayCommand CreateChannelFromSuggestedAppCommand { get; }
     public RelayCommand CreateEmptyChannelCommand { get; }
@@ -439,24 +603,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             MonitorMasterDspModel = Config.MonitorMasterDsp,
             StreamMasterDspModel = Config.StreamMasterDsp
         };
-        Engine.Soundboard.MasterVolume = Config.SoundboardMasterVolume;
         Engine.SetListeningMixIndex(_listeningMixIndex);
 
-        Hotkeys = new GlobalHotkeyService();
-        Hotkeys.PadHotkeyPressed += pad =>
-        {
-            if (_dispatcherQueue != null)
-                _dispatcherQueue.TryEnqueue(() => Engine.Soundboard.TriggerPad(pad));
-            else
-                Engine.Soundboard.TriggerPad(pad);
-        };
-        Hotkeys.StopAllHotkeyPressed += () =>
-        {
-            if (_dispatcherQueue != null)
-                _dispatcherQueue.TryEnqueue(() => Engine.Soundboard.StopAll());
-            else
-                Engine.Soundboard.StopAll();
-        };
+        Tray = new TrayIconService();
 
         ToggleThemeCommand = new RelayCommand(() => IsLightMode = !IsLightMode);
         ToggleCompactModeCommand = new RelayCommand(() => IsCompactMode = !IsCompactMode);
@@ -465,13 +614,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         RefreshDevicesCommand = new RelayCommand(RefreshAudioDevices);
         RefreshAppsCommand = new RelayCommand(RefreshActiveAppSessions);
-        StopAllSoundsCommand = new RelayCommand(() => Engine.Soundboard.StopAll());
-        TriggerPadCommand = new RelayCommand(p =>
-        {
-            if (p is SoundPadModel pad)
-                Engine.Soundboard.TriggerPad(pad);
-        });
-
         ToggleMonitorMuteCommand = new RelayCommand(() => IsMonitorMasterMuted = !IsMonitorMasterMuted);
         ToggleStreamMuteCommand = new RelayCommand(() => IsStreamMasterMuted = !IsStreamMasterMuted);
 
@@ -510,6 +652,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(ch.Id);
                 Channels.Remove(ch);
                 Config.Channels.Remove(ch);
+                ReleaseCableIfUnused(ch);
                 if (SelectedConfigChannel == ch)
                     IsChannelConfigModalOpen = false;
                 SaveConfig();
@@ -527,6 +670,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(ch.Id);
                 Channels.Remove(ch);
                 Config.Channels.Remove(ch);
+                ReleaseCableIfUnused(ch);
                 SaveConfig();
                 StatusBannerText = $"Removed channel '{ch.Name}'.";
             }
@@ -622,7 +766,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(old.Id);
 
             Config.Channels = fresh.Channels;
-            InitializeChannelsAndPads();
+            InitializeChannels();
             SaveConfig();
             StatusBannerText = "Restored default System channel configuration.";
         });
@@ -663,27 +807,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 IsCreateChannelPopoverOpen = false;
                 StatusBannerText = $"Added Input Device channel: {dev.Name}";
             }
-        });
-
-        CreateSoundboardChannelCommand = new RelayCommand(() =>
-        {
-            IsCreateChannelPopoverOpen = false;
-            var existing = Channels.FirstOrDefault(c => c.SourceType == ChannelSourceType.SoundboardChannel);
-            if (existing != null)
-            {
-                OpenChannelConfig(existing, 0);
-                return;
-            }
-            var sb = new ChannelStripModel
-            {
-                Name = "Soundboard",
-                Icon = "〰️",
-                AccentHex = "#FF7043",
-                SourceType = ChannelSourceType.SoundboardChannel,
-                DeviceName = "Leyline Built-in Sampler",
-                InputVolume = 0.90f
-            };
-            AddChannel(sb);
         });
 
         CreateChannelFromActiveAppCommand = new RelayCommand(p =>
@@ -753,27 +876,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         });
 
         RefreshAudioDevices();
-        InitializeChannelsAndPads();
+        ConnectMixOutputCables();
+        InitializeChannels();
+        ApplyAllMixExtraOutputs();
+
+        if (_dispatcherQueue != null)
+        {
+            _autoSaver = new ConfigAutoSaver(_dispatcherQueue, SaveConfig);
+            PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName != null && AutoSavedViewModelProperties.Contains(e.PropertyName))
+                    _autoSaver.ScheduleSave();
+            };
+        }
+        SaveConfig();   // record the channels' cable bindings; also starts the auto-save watch
         RefreshDriverStatus();
         RefreshActiveAppSessions();
         ScanVstPlugins(forceDeepProbe: false);
 
-        _meterTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(33)
-        };
-        _meterTimer.Tick += (_, _) =>
-        {
-            if (IsAnyPopupOpen?.Invoke() == true)
-                return;
-
-            Engine.UpdateAllMeters();
-            MonitorMasterPeakL = Engine.MonitorPeakLeft;
-            MonitorMasterPeakR = Engine.MonitorPeakRight;
-            StreamMasterPeakL = Engine.StreamPeakLeft;
-            StreamMasterPeakR = Engine.StreamPeakRight;
-        };
-        _meterTimer.Start();
+        CompositionTarget.Rendering += OnRenderingMeters;
 
         _sessionPollTimer = new DispatcherTimer
         {
@@ -861,6 +982,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Engine.SetMonitorOutputDevice(_selectedMonitorDevice?.Id);
         Engine.SetStreamOutputDevice(_selectedStreamDevice?.Id);
+        UpdateMixOutputCounts();
         UpdatePopoverFilteredItems();
     }
 
@@ -894,7 +1016,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void InitializeChannelsAndPads()
+    private void InitializeChannels()
     {
         MixBuses.Clear();
         if (Config.MixBuses.Count == 0)
@@ -908,17 +1030,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Channels.Clear();
         foreach (var ch in Config.Channels)
         {
-            EnsureChannelBoundToVirtualPlaybackDevice(ch);
+            EnsureChannelBoundToCable(ch);
             ch.NotifyAppsChanged();
             ch.NotifyFxChanged();
             Channels.Add(ch);
             Engine.AddOrRestartChannel(ch);
-        }
-
-        SoundPads.Clear();
-        foreach (var pad in Config.SoundPads)
-        {
-            SoundPads.Add(pad);
         }
     }
 
@@ -935,57 +1051,79 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void EnsureChannelBoundToVirtualPlaybackDevice(ChannelStripModel channel)
+    /// <summary>
+    /// Binds a channel to its Leyline cable: connects the cable and points DeviceId at the cable's playback
+    /// endpoint, where the channel's apps are routed. Channels without a cable (or without the driver) fall back
+    /// to per-app capture.
+    /// </summary>
+    private void EnsureChannelBoundToCable(ChannelStripModel channel)
     {
-        if (channel.IsHardwareInput || channel.SourceType == ChannelSourceType.SoundboardChannel)
+        if (channel.IsHardwareInput)
             return;
 
-        if (!string.IsNullOrWhiteSpace(channel.DeviceId) &&
-            RenderDevices.Any(d => d.Id == channel.DeviceId))
+        // Channels from older configs (and app channels) get a cable from their name.
+        if (string.IsNullOrWhiteSpace(channel.CableId))
+            channel.CableId = GuessCableForChannel(channel.Name) ?? string.Empty;
+
+        var cable = LeylineCableService.Find(channel.CableId);
+        if (cable == null || cable.IsMixOutput)
         {
+            channel.CableId = string.Empty;
+            // Drop a device left over from Leyline's former virtual devices.
+            if (!string.IsNullOrWhiteSpace(channel.DeviceId) && !RenderDevices.Any(d => d.Id == channel.DeviceId))
+            {
+                channel.DeviceId = string.Empty;
+                channel.DeviceName = "None (Direct App Capture)";
+            }
             return;
         }
 
-        var matched = ResolveVirtualPlaybackDeviceForChannel(channel);
-        if (matched != null)
+        var (renderId, _) = LeylineCableService.ConnectAndResolve(cable.Id);
+        if (renderId != null)
         {
-            channel.DeviceId = matched.Id;
-            channel.DeviceName = matched.Name;
+            channel.DeviceId = renderId;
+            channel.DeviceName = $"{cable.DisplayName} ({LeylineDriverService.DeviceName})";
+        }
+        else
+        {
+            channel.DeviceId = string.Empty;
+            channel.DeviceName = "Leyline driver not running (Direct App Capture)";
         }
     }
 
-    private AudioDeviceInfo? ResolveVirtualPlaybackDeviceForChannel(ChannelStripModel channel)
+    private static string? GuessCableForChannel(string name)
     {
-        var vpDevices = RenderDevices
-            .Where(d => LeylineDriverService.IsLeylineEndpoint(d.Name))
-            .ToList();
+        bool Has(string word) => name.Contains(word, StringComparison.OrdinalIgnoreCase);
 
-        if (vpDevices.Count == 0)
-            return null;
+        if (Has("System")) return "System";
+        if (Has("Game")) return "Game";
+        if (Has("Browser") || Has("Chrome") || Has("Firefox") || Has("Edge")) return "Browser";
+        if (Has("Music") || Has("Spotify")) return "Music";
+        if (Has("Voice") || Has("Discord")) return "VoiceChat";
+        return null;
+    }
 
-        string name = channel.Name;
-        string keyword = name switch
-        {
-            _ when name.Contains("System", StringComparison.OrdinalIgnoreCase) => "System",
-            _ when name.Contains("Game", StringComparison.OrdinalIgnoreCase) => "Game",
-            _ when name.Contains("Browser", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Firefox", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Edge", StringComparison.OrdinalIgnoreCase) => "Browser",
-            _ when name.Contains("Music", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Spotify", StringComparison.OrdinalIgnoreCase) => "Music",
-            _ when name.Contains("Voice", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Discord", StringComparison.OrdinalIgnoreCase) => "Voice Chat",
-            _ when name.Contains("OBS", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Stream", StringComparison.OrdinalIgnoreCase) => "Stream Mix",
-            _ when name.Contains("Mic", StringComparison.OrdinalIgnoreCase) => "Mic FX",
-            _ => "Game"
-        };
+    /// <summary>Disconnects a removed channel's cable when no other channel uses it.</summary>
+    private void ReleaseCableIfUnused(ChannelStripModel removed)
+    {
+        if (string.IsNullOrWhiteSpace(removed.CableId))
+            return;
 
-        var directMatch = vpDevices.FirstOrDefault(d =>
-            d.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        if (!Channels.Any(c => c != removed && c.CableId.Equals(removed.CableId, StringComparison.OrdinalIgnoreCase)))
+            LeylineCableService.SetConnected(removed.CableId, false);
+    }
 
-        return directMatch ?? vpDevices.FirstOrDefault();
+    /// <summary>
+    /// Connects the mix output cables: the Stream Mix plays into "Stream Mix" (for OBS) unless another Stream
+    /// output is chosen, and the Mic Rec mix plays into "Microphone" (for Discord and other voice apps).
+    /// </summary>
+    private void ConnectMixOutputCables()
+    {
+        var (streamRender, _) = LeylineCableService.ConnectAndResolve(LeylineCableService.StreamMixCableId);
+        Engine.SetStreamMixCableDevice(streamRender);
+
+        var (micRender, _) = LeylineCableService.ConnectAndResolve(LeylineCableService.MicrophoneCableId);
+        Engine.SetMicRecOutputDevice(micRender);
     }
 
     public void ChangeChannelDevice(ChannelStripModel channel, string? newDeviceId)
@@ -1031,7 +1169,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (channel.AssignedApps.Any(a => a.ProcessName.Equals(cleanProc, StringComparison.OrdinalIgnoreCase)))
             return;
 
-        EnsureChannelBoundToVirtualPlaybackDevice(channel);
+        EnsureChannelBoundToCable(channel);
 
         var item = new AssignedAppModel
         {
@@ -1100,7 +1238,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void AddChannel(ChannelStripModel model)
     {
-        EnsureChannelBoundToVirtualPlaybackDevice(model);
+        EnsureChannelBoundToCable(model);
         Config.Channels.Add(model);
         Channels.Add(model);
         Engine.AddOrRestartChannel(model);
@@ -1124,7 +1262,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (existing != null)
         {
             existing.TargetProcessId = app.ProcessId;
-            EnsureChannelBoundToVirtualPlaybackDevice(existing);
+            EnsureChannelBoundToCable(existing);
             if (!string.IsNullOrWhiteSpace(existing.DeviceId))
                 PolicyConfigClient.SetApplicationOutputEndpoint(app.ProcessId, existing.DeviceId);
             Engine.AddOrRestartChannel(existing);
@@ -1145,7 +1283,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             PersonalMix = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
             StreamMix = new MixSendState { IsEnabled = true, Volume = 0.90f, IsMuted = false }
         };
-        EnsureChannelBoundToVirtualPlaybackDevice(strip);
+        EnsureChannelBoundToCable(strip);
         if (string.IsNullOrWhiteSpace(strip.DeviceId))
         {
             // Fallback: only mute PersonalMix if no Leyline Virtual Audio playback device is installed
@@ -1307,9 +1445,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void ScanVstPlugins(bool forceDeepProbe = false)
+    private bool _isScanningVst;
+
+    // Probing new plugins loads each one in a child process, so the scan runs off the UI thread.
+    public async void ScanVstPlugins(bool forceDeepProbe = false)
     {
-        var all = VstScanner.ScanPlugins(Config.CustomVstDirectories, Config.AllowedBlockedVstPaths, forceDeepProbe);
+        if (_isScanningVst)
+            return;
+        _isScanningVst = true;
+
+        List<VstPluginInfo> all;
+        try
+        {
+            var directories = Config.CustomVstDirectories.ToList();
+            var allowed = Config.AllowedBlockedVstPaths.ToList();
+            if (forceDeepProbe)
+                StatusBannerText = "Scanning plugins...";
+            all = await Task.Run(() => VstScanner.ScanPlugins(directories, allowed, forceDeepProbe, NotificationService.ReportScanProgress));
+        }
+        finally
+        {
+            _isScanningVst = false;
+        }
 
         ScannedEffectPlugins.Clear();
         BrokenPlugins.Clear();
@@ -1332,6 +1489,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         RebuildUsableVstList();
+        NotificationService.CompleteScan(ScannedEffectPlugins.Count, VirtualInstrumentPlugins.Count, BrokenPlugins.Count);
+        if (forceDeepProbe)
+            StatusBannerText = $"Found {ScannedEffectPlugins.Count} effects and {VirtualInstrumentPlugins.Count} instruments.";
     }
 
     private void RebuildUsableVstList()
@@ -1347,50 +1507,78 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void RefreshDriverStatus()
     {
-        IsDriverBranded = LeylineDriverService.IsDriverBranded();
-        int vpCount = AllDevices.Count(d => LeylineDriverService.IsLeylineEndpoint(d.Name));
-        DriverStatusText = IsDriverBranded
-            ? $"Leyline Virtual Audio Driver Active ({vpCount} Leyline endpoints online)"
-            : "Leyline Virtual Audio Driver Not Installed • Click 'Install Leyline Audio Driver (UAC)' to create standalone Leyline endpoints";
+        var state = LeylineDriverService.GetState();
+        bool running = state != LeylineDriverState.NotInstalled && LeylineCableService.IsDriverRunning();
+        bool testSigning = LeylineDriverService.IsTestSigningEnabled();
+        Version? installed = LeylineDriverService.InstalledDriverVersion;
+        Version? bundled = LeylineDriverService.BundledDriverVersion;
+
+        IsDriverBranded = running;
+        DriverNeedsAttention = state is LeylineDriverState.NotInstalled or LeylineDriverState.UpdateAvailable ||
+                               (state == LeylineDriverState.Installed && !running);
+
+        DriverActionText = state == LeylineDriverState.UpdateAvailable
+            ? $"Update Leyline Virtual Audio Driver to {bundled} (UAC)"
+            : "Install Leyline Virtual Audio Driver (UAC)";
+
+        DriverStatusText = state switch
+        {
+            LeylineDriverState.NotBundled =>
+                "No driver package next to Leyline.exe • Build it with driver\\LeylineVAD\\Build-Driver.ps1 and Package-Driver.ps1",
+            LeylineDriverState.NotInstalled when !testSigning =>
+                "Not installed • Windows test signing is off: run 'bcdedit /set testsigning on' as administrator and reboot first",
+            LeylineDriverState.NotInstalled =>
+                "Not installed • Install it to create Leyline's virtual audio cables",
+            LeylineDriverState.UpdateAvailable =>
+                $"Update available: driver {installed} installed, {bundled} included with this version of Leyline",
+            _ when !running && !testSigning =>
+                $"Driver {installed} installed but not running • Windows test signing is off: run 'bcdedit /set testsigning on' as administrator and reboot",
+            _ when !running =>
+                $"Driver {installed} installed but not running • Try reinstalling it",
+            _ =>
+                $"Leyline Virtual Audio {installed} active • {LeylineCableService.Cables.Count(c => LeylineCableService.IsConnected(c.Id) == true)} of {LeylineCableService.Cables.Count} cables connected"
+        };
     }
 
     private void ExecuteDriverAction(bool install)
     {
+        if (install && !LeylineDriverService.IsTestSigningEnabled())
+        {
+            StatusBannerText = "Leyline's driver is test-signed: run 'bcdedit /set testsigning on' as administrator, reboot, then install it.";
+            RefreshDriverStatus();
+            return;
+        }
+
         StatusBannerText = install
-            ? "Installing Leyline Virtual Audio Driver (accept UAC prompt)..."
-            : "Removing Leyline Virtual Audio Driver instances (accept UAC prompt)...";
+            ? "Installing Leyline Virtual Audio Driver (accept the administrator prompt)..."
+            : "Removing Leyline Virtual Audio Driver (accept the administrator prompt)...";
 
         if (LeylineDriverService.RunElevatedDriverAction(install, out string msg))
         {
             RefreshAudioDevices();
             if (install)
             {
-                AutoBindChannelsToLeylineDriver();
+                ConnectMixOutputCables();
+                BindAllChannelsToCables();
             }
-            RefreshDriverStatus();
+            RefreshAudioDevices();
             SaveConfig();
         }
 
+        RefreshDriverStatus();
         StatusBannerText = msg;
     }
 
-    public void AutoBindChannelsToLeylineDriver()
+    /// <summary>Re-binds every channel to its cable (after the driver was installed or updated).</summary>
+    public void BindAllChannelsToCables()
     {
         foreach (var ch in Channels)
         {
-            if (ch.IsHardwareInput || ch.SourceType == ChannelSourceType.SoundboardChannel)
+            if (ch.IsHardwareInput)
                 continue;
 
-            var vpDevice = RenderDevices.FirstOrDefault(d =>
-                LeylineDriverService.IsLeylineEndpoint(d.Name) &&
-                d.Name.Contains(ch.Name, StringComparison.OrdinalIgnoreCase));
-
-            if (vpDevice != null)
-            {
-                ch.DeviceId = vpDevice.Id;
-                ch.DeviceName = vpDevice.Name;
-                Engine.AddOrRestartChannel(ch);
-            }
+            EnsureChannelBoundToCable(ch);
+            Engine.AddOrRestartChannel(ch);
         }
     }
 
@@ -1425,6 +1613,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ThemeButtonText));
         OnPropertyChanged(nameof(MinimizeToTrayOnClose));
         OnPropertyChanged(nameof(StartWithWindows));
+        OnPropertyChanged(nameof(ShowNotifications));
 
         Engine.MonitorMasterVolume = Config.MonitorMasterVolume;
         Engine.StreamMasterVolume = Config.StreamMasterVolume;
@@ -1432,11 +1621,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Engine.IsStreamMasterMuted = Config.IsStreamMasterMuted;
         Engine.MonitorMasterDspModel = Config.MonitorMasterDsp;
         Engine.StreamMasterDspModel = Config.StreamMasterDsp;
-        Engine.Soundboard.MasterVolume = Config.SoundboardMasterVolume;
 
         RefreshAudioDevices();
-        InitializeChannelsAndPads();
-        Hotkeys.RebindAll(SoundPads);
+        InitializeChannels();
+        ApplyAllMixExtraOutputs();
         ScanVstPlugins(forceDeepProbe: false);
         UpdateChannelRoutedAppCounts();
         SaveConfig();
@@ -1448,14 +1636,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void SaveConfig()
     {
         ConfigService.Save(Config);
+        _autoSaver?.Watch(Config);   // channels and mixes added since the last save
+    }
+
+    // Runs once per rendered frame (not while the window is hidden), so meters move at the display's frame rate
+    private void OnRenderingMeters(object? sender, object e)
+    {
+        TimeSpan now = (e as RenderingEventArgs)?.RenderingTime ?? TimeSpan.Zero;
+        double elapsedMs = (now - _lastMeterFrame).TotalMilliseconds;
+        if (elapsedMs < MinMeterIntervalMs && elapsedMs >= 0)
+            return;
+        _lastMeterFrame = now;
+
+        if (IsAnyPopupOpen?.Invoke() == true)
+            return;
+
+        Engine.UpdateAllMeters(Math.Clamp(elapsedMs, 0.0, 100.0));
+        MonitorMasterPeakL = Engine.MonitorPeakLeft;
+        MonitorMasterPeakR = Engine.MonitorPeakRight;
+        StreamMasterPeakL = Engine.StreamPeakLeft;
+        StreamMasterPeakR = Engine.StreamPeakRight;
     }
 
     public void Dispose()
     {
-        _meterTimer.Stop();
+        CompositionTarget.Rendering -= OnRenderingMeters;
         _sessionPollTimer.Stop();
         SaveConfig();
-        Hotkeys.Dispose();
+        Tray.Dispose();
         Engine.Dispose();
     }
 }

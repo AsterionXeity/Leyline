@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using Leyline.Models;
+using Leyline.Services;
 
 namespace Leyline.Audio;
 
@@ -78,12 +79,6 @@ public sealed class ChannelStripProcessor : IDisposable
 
         try
         {
-            if (Model.SourceType == ChannelSourceType.SoundboardChannel)
-            {
-                Model.StatusText = "Built-in Soundboard";
-                return;
-            }
-
             if (Model.SourceType == ChannelSourceType.MicrophoneInput)
             {
                 // Strictly hardware/virtual eCapture ONLY; never fallback to default if unselected
@@ -91,12 +86,16 @@ public sealed class ChannelStripProcessor : IDisposable
                 return;
             }
 
-            // Primary path: Route assigned apps to this channel's Leyline Virtual Audio playback device
-            // and capture from that virtual playback endpoint (no double-audio on default speakers).
             if (!string.IsNullOrWhiteSpace(Model.DeviceId))
             {
                 RouteAssignedAppsToVirtualDevice(Model.DeviceId);
-                StartVirtualBusLoopbackCapture();
+
+                // Leyline cable: apps play into the cable's playback side; record its recording side.
+                // Other virtual devices: loopback-capture the playback endpoint.
+                if (!string.IsNullOrWhiteSpace(Model.CableId))
+                    StartCableCapture();
+                else
+                    StartVirtualBusLoopbackCapture();
             }
 
             // Fallback path: If no virtual playback device is assigned/active on this channel, use per-process loopback capture
@@ -144,6 +143,34 @@ public sealed class ChannelStripProcessor : IDisposable
         _captureDevice = cap;
         cap.StartRecording();
         Model.StatusText = "Live Input";
+    }
+
+    private void StartCableCapture()
+    {
+        // A cable that a mix is playing into (Stream Mix / Microphone) would feed that mix back into itself.
+        if (_isMixOutputDevice(Model.DeviceId))
+        {
+            Model.StatusText = "Skipped (Mix Output Cable)";
+            return;
+        }
+
+        string? captureId = LeylineCableService.FindEndpointId(Model.CableId, DataFlow.Capture);
+        if (captureId == null)
+        {
+            Model.StatusText = "Cable not connected";
+            return;
+        }
+
+        using var enumerator = new MMDeviceEnumerator();
+        var device = enumerator.GetDevice(captureId);
+        Model.DeviceName = $"{LeylineCableService.Find(Model.CableId)?.DisplayName ?? Model.CableId} ({LeylineDriverService.DeviceName})";
+
+        var capture = new WasapiCapture(device, true, 20);
+        capture.DataAvailable += OnCaptureDataAvailable;
+        capture.RecordingStopped += OnCaptureStopped;
+        _captureDevice = capture;
+        capture.StartRecording();
+        Model.StatusText = "Routing Active";
     }
 
     private void StartVirtualBusLoopbackCapture()
@@ -268,13 +295,6 @@ public sealed class ChannelStripProcessor : IDisposable
         }
     }
 
-    public void InjectExternalStereo48k(ReadOnlySpan<float> stereoInterleaved, int sampleFrames)
-    {
-        if (!_isRunning || sampleFrames <= 0) return;
-        float[] copy = stereoInterleaved[..(sampleFrames * 2)].ToArray();
-        ProcessAndDispatchStereo(copy, sampleFrames);
-    }
-
     private void OnCaptureDataAvailable(object? sender, WaveInEventArgs e)
     {
         if (!_isRunning || e.BytesRecorded <= 0)
@@ -337,10 +357,10 @@ public sealed class ChannelStripProcessor : IDisposable
             _micRecBuffer.ClearBuffer();
     }
 
-    public void DecayAndPublishMeters()
+    public void DecayAndPublishMeters(float decay)
     {
-        _smoothedPeakL *= 0.84f;
-        _smoothedPeakR *= 0.84f;
+        _smoothedPeakL *= decay;
+        _smoothedPeakR *= decay;
         if (_smoothedPeakL < 0.0005f) _smoothedPeakL = 0f;
         if (_smoothedPeakR < 0.0005f) _smoothedPeakR = 0f;
 
@@ -477,7 +497,7 @@ public sealed class ChannelStripProcessor : IDisposable
         public BusBranchSampleProvider(BufferedWaveProvider buffer, Func<float> gainProvider)
         {
             _buffer = buffer;
-            _source = buffer.ToSampleProvider();
+            _source = new LowLatencyBufferReader(buffer);
             _gainProvider = gainProvider;
         }
 

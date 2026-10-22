@@ -1,18 +1,16 @@
 using System.Runtime.InteropServices;
-using Leyline.Models;
 
 namespace Leyline.Services;
 
-public sealed class GlobalHotkeyService : IDisposable
+/// <summary>Leyline's notification-area (tray) icon and its menu.</summary>
+public sealed class TrayIconService : IDisposable
 {
-    private const int WM_HOTKEY = 0x0312;
     private const int WM_COMMAND = 0x0111;
     private const int WM_TRAYICON = 0x8000 + 101;
     private const int WM_LBUTTONDBLCLK = 0x0203;
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_CONTEXTMENU = 0x007B;
-    private const uint MOD_NOREPEAT = 0x4000;
 
     private const uint NIM_ADD = 0x00000000;
     private const uint NIM_MODIFY = 0x00000001;
@@ -29,7 +27,6 @@ public sealed class GlobalHotkeyService : IDisposable
     private const int CMD_TRAY_OPEN = 4001;
     private const int CMD_TRAY_MUTE_PERSONAL = 4002;
     private const int CMD_TRAY_MUTE_STREAM = 4003;
-    private const int CMD_TRAY_STOP_SOUNDS = 4004;
     private const int CMD_TRAY_EXIT = 4005;
 
     private delegate IntPtr SubclassProcDelegate(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, nuint uIdSubclass, nuint dwRefData);
@@ -38,11 +35,6 @@ public sealed class GlobalHotkeyService : IDisposable
     private SubclassProcDelegate? _subclassDelegate;
     private bool _trayAdded;
     private System.Drawing.Icon? _appIcon;
-    private readonly Dictionary<int, SoundPadModel> _registeredPads = new();
-    private int _nextHotkeyId = 9000;
-
-    public event Action<SoundPadModel>? PadHotkeyPressed;
-    public event Action? StopAllHotkeyPressed;
     public event Action? TrayRestoreRequested;
     public event Action? TrayTogglePersonalMuteRequested;
     public event Action? TrayToggleStreamMuteRequested;
@@ -85,57 +77,9 @@ public sealed class GlobalHotkeyService : IDisposable
         }
     }
 
-    public void RebindAll(IEnumerable<SoundPadModel> pads)
-    {
-        if (_hwnd == IntPtr.Zero) return;
-
-        UnregisterAll();
-
-        // Register Ctrl+Shift+0 (0x30) as Global Stop All Soundboard panic key
-        RegisterHotKey(_hwnd, 8999, 2 | 4 | MOD_NOREPEAT, 0x30);
-
-        foreach (var pad in pads)
-        {
-            if (pad.HotkeyVirtualKey != 0)
-            {
-                int id = _nextHotkeyId++;
-                if (RegisterHotKey(_hwnd, id, pad.HotkeyModifiers | MOD_NOREPEAT, pad.HotkeyVirtualKey))
-                {
-                    _registeredPads[id] = pad;
-                }
-            }
-        }
-    }
-
-    public void UnregisterAll()
-    {
-        if (_hwnd == IntPtr.Zero) return;
-
-        UnregisterHotKey(_hwnd, 8999);
-        foreach (int id in _registeredPads.Keys)
-        {
-            UnregisterHotKey(_hwnd, id);
-        }
-        _registeredPads.Clear();
-    }
-
     private IntPtr SubclassWndProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, nuint uIdSubclass, nuint dwRefData)
     {
-        if (uMsg == WM_HOTKEY)
-        {
-            int id = (int)wParam.ToInt64();
-            if (id == 8999)
-            {
-                StopAllHotkeyPressed?.Invoke();
-                return IntPtr.Zero;
-            }
-            if (_registeredPads.TryGetValue(id, out var pad))
-            {
-                PadHotkeyPressed?.Invoke(pad);
-                return IntPtr.Zero;
-            }
-        }
-        else if (uMsg == WM_TRAYICON)
+        if (uMsg == WM_TRAYICON)
         {
             int mouseMsg = (int)(lParam.ToInt64() & 0xFFFF);
             if (mouseMsg == WM_LBUTTONDBLCLK || mouseMsg == WM_LBUTTONUP)
@@ -166,7 +110,6 @@ public sealed class GlobalHotkeyService : IDisposable
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             AppendMenuW(hMenu, MF_STRING, CMD_TRAY_MUTE_PERSONAL, "Mute / Unmute Personal Mix");
             AppendMenuW(hMenu, MF_STRING, CMD_TRAY_MUTE_STREAM, "Mute / Unmute Stream Mix");
-            AppendMenuW(hMenu, MF_STRING, CMD_TRAY_STOP_SOUNDS, "Stop All Soundboard Pads");
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             AppendMenuW(hMenu, MF_STRING, CMD_TRAY_EXIT, "Exit Leyline");
 
@@ -184,9 +127,6 @@ public sealed class GlobalHotkeyService : IDisposable
                     break;
                 case CMD_TRAY_MUTE_STREAM:
                     TrayToggleStreamMuteRequested?.Invoke();
-                    break;
-                case CMD_TRAY_STOP_SOUNDS:
-                    StopAllHotkeyPressed?.Invoke();
                     break;
                 case CMD_TRAY_EXIT:
                     TrayExitRequested?.Invoke();
@@ -218,7 +158,6 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public void Dispose()
     {
-        UnregisterAll();
         RemoveTrayIcon();
         if (_hwnd != IntPtr.Zero && _subclassDelegate != null)
         {
@@ -256,11 +195,7 @@ public sealed class GlobalHotkeyService : IDisposable
     [DllImport("comctl32.dll", SetLastError = true)]
     private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATAW lpData);

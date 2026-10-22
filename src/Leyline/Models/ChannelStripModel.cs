@@ -9,7 +9,7 @@ public enum ChannelSourceType
     MicrophoneInput,
     VirtualDeviceLoopback,
     ProcessCapture,
-    SoundboardChannel,
+    SoundboardChannel,   // removed feature; kept so the saved numbers of the types after it stay the same
     AppGroupChannel
 }
 
@@ -216,23 +216,59 @@ public sealed class OutputMixBusModel : ObservableObject
     public string Icon
     {
         get => _icon;
-        set => SetProperty(ref _icon, value);
+        set
+        {
+            if (SetProperty(ref _icon, value))
+                OnPropertyChanged(nameof(GlyphIcon));
+        }
     }
+
+    // Icon picked in the mix settings window, or the glyph for a default mix's emoji
+    [JsonIgnore]
+    public string GlyphIcon => IconGlyphs.IsGlyph(_icon) ? _icon : _icon switch
+    {
+        "📡" => "\uE701",
+        "👥" => "\uE716",
+        "🎙️" => "\uE7C8",
+        _ => "\uE7F6"
+    };
 
     public string OutputDeviceId
     {
         get => _outputDeviceId;
+        set => SetProperty(ref _outputDeviceId, value);
+    }
+
+    /// <summary>Devices this mix also plays to (besides the listening device and the mix's own output).</summary>
+    public ObservableCollection<string> ExtraOutputDeviceIds { get; set; } = new();
+
+    private int _outputCount;
+
+    /// <summary>Devices the mix is playing to right now (set by MainViewModel from the engine).</summary>
+    [JsonIgnore]
+    public int OutputCount
+    {
+        get => _outputCount;
         set
         {
-            if (SetProperty(ref _outputDeviceId, value))
+            if (SetProperty(ref _outputCount, value))
+            {
                 OnPropertyChanged(nameof(OutputSubtitle));
+                OnPropertyChanged(nameof(HasOutputs));
+            }
         }
     }
 
     [JsonIgnore]
-    public string OutputSubtitle => (!string.IsNullOrWhiteSpace(_outputDeviceId) || _isListeningTarget)
-        ? "1 output"
-        : string.Empty;
+    public bool HasOutputs => _outputCount > 0;
+
+    [JsonIgnore]
+    public string OutputSubtitle => _outputCount switch
+    {
+        0 => string.Empty,
+        1 => "1 output",
+        _ => $"{_outputCount} outputs"
+    };
 
     public float MasterVolume
     {
@@ -261,11 +297,7 @@ public sealed class OutputMixBusModel : ObservableObject
     public bool IsListeningTarget
     {
         get => _isListeningTarget;
-        set
-        {
-            if (SetProperty(ref _isListeningTarget, value))
-                OnPropertyChanged(nameof(OutputSubtitle));
-        }
+        set => SetProperty(ref _isListeningTarget, value);
     }
 
     [JsonIgnore]
@@ -305,6 +337,7 @@ public sealed class ChannelStripModel : ObservableObject
     private string _accentHex = "#29B6F6";
     private ChannelSourceType _sourceType = ChannelSourceType.AppGroupChannel;
     private string _deviceId = string.Empty;
+    private string _cableId = string.Empty;
     private string _deviceName = "None (Unselected)";
     private uint _targetProcessId;
     private string _targetProcessName = string.Empty;
@@ -364,6 +397,7 @@ public sealed class ChannelStripModel : ObservableObject
         "〰️" => "\uE9E9",
         "🎙️" => "\uE720",
         "🎸" => "\uEC4F",
+        _ when IconGlyphs.IsGlyph(_icon) => _icon,
         _ => "\uE7F4"
     };
 
@@ -408,7 +442,6 @@ public sealed class ChannelStripModel : ObservableObject
         ChannelSourceType.MicrophoneInput => "INPUT DEVICE",
         ChannelSourceType.VirtualDeviceLoopback => "VIRTUAL BUS",
         ChannelSourceType.ProcessCapture => "APP STREAM",
-        ChannelSourceType.SoundboardChannel => "BUILT-IN",
         ChannelSourceType.AppGroupChannel => "APP CHANNEL",
         _ => "AUDIO"
     };
@@ -417,6 +450,16 @@ public sealed class ChannelStripModel : ObservableObject
     {
         get => _deviceId;
         set => SetProperty(ref _deviceId, value);
+    }
+
+    /// <summary>
+    /// Leyline cable this channel uses (LeylineCableService.Cables), empty for none. Apps are routed to the cable's
+    /// playback endpoint (DeviceId) and the channel records the cable's recording endpoint.
+    /// </summary>
+    public string CableId
+    {
+        get => _cableId;
+        set => SetProperty(ref _cableId, value);
     }
 
     public string DeviceName

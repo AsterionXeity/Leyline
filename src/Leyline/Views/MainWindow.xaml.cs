@@ -43,17 +43,20 @@ public sealed partial class MainWindow : Window
         "#29B6F6", "#9C27B0", "#8D3B3B", "#EC407A", "#FBC02D", "#FF7043", "#448AFF", "#00E676"
     ];
 
-    private static readonly string[] ChannelIconPalette =
-    [
-        "🎮", "🌐", "🎵", "💬", "🎙️", "🖥️", "📺", "〰️", "🎸"
-    ];
-
     public MainWindow(MainViewModel vm)
     {
         InitializeComponent();
         BackdropHelper.Apply(this);
         _vm = vm;
         RootGrid.DataContext = _vm;
+
+        // Driver setup prompt: only on first run, after an update that ships a newer driver, or when the
+        // driver is not running.
+        if (!_vm.DriverNeedsAttention)
+        {
+            StartupDriverPromptOverlay.Visibility = Visibility.Collapsed;
+            FullModeRootGrid.Visibility = Visibility.Visible;
+        }
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(CustomTitleBarDragRegion);
@@ -65,6 +68,7 @@ public sealed partial class MainWindow : Window
         if (_appWindow != null)
         {
             _appWindow.Title = "Leyline";
+            _appWindow.SetIcon(IconGenerator.IconPath);
             _appWindow.Resize(new SizeInt32(_savedFullWidth, _savedFullHeight));
             _appWindow.Closing += AppWindow_Closing;
 
@@ -129,15 +133,18 @@ public sealed partial class MainWindow : Window
             RootGrid.XamlRoot != null &&
             VisualTreeHelper.GetOpenPopupsForXamlRoot(RootGrid.XamlRoot).Count > 0;
 
-        _vm.Hotkeys.AttachWindow(_hwnd);
-        _vm.Hotkeys.RebindAll(_vm.SoundPads);
-        _vm.Hotkeys.TrayRestoreRequested += () => DispatcherQueue.TryEnqueue(RestoreFromTray);
-        _vm.Hotkeys.TrayTogglePersonalMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsMonitorMasterMuted = !_vm.IsMonitorMasterMuted);
-        _vm.Hotkeys.TrayToggleStreamMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsStreamMasterMuted = !_vm.IsStreamMasterMuted);
-        _vm.Hotkeys.TrayExitRequested += () => DispatcherQueue.TryEnqueue(ExitApplication);
+        _vm.Tray.AttachWindow(_hwnd);
+        _vm.Tray.TrayRestoreRequested += () => DispatcherQueue.TryEnqueue(RestoreFromTray);
+        _vm.Tray.TrayTogglePersonalMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsMonitorMasterMuted = !_vm.IsMonitorMasterMuted);
+        _vm.Tray.TrayToggleStreamMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsStreamMasterMuted = !_vm.IsStreamMasterMuted);
+        _vm.Tray.TrayExitRequested += () => DispatcherQueue.TryEnqueue(ExitApplication);
+        NotificationService.OpenRequested += () => DispatcherQueue.TryEnqueue(RestoreFromTray);
 
         ModalAddAppCombo.ItemsSource = _vm.ActiveAppSessions;
         ModalVstPickerCombo.ItemsSource = _vm.DiscoveredVstPlugins;
+        ChannelIconPicker.ItemsSource = IconGlyphs.Choices;
+        ChannelColorPicker.ItemsSource = ChannelColorPalette;
+        MixIconPicker.ItemsSource = IconGlyphs.Choices;
         ModalMicDeviceCombo.ItemsSource = _vm.CaptureDevicesWithNone;
         ModalVirtualBusCombo.ItemsSource = _vm.VirtualDevicesWithNone;
     }
@@ -163,6 +170,7 @@ public sealed partial class MainWindow : Window
     {
         _allowRealExit = true;
         ThemeService.ThemeChanged -= OnThemeChanged;
+        NotificationService.Shutdown();
         _vm.Dispose();
         Close();
         Application.Current.Exit();
@@ -174,10 +182,12 @@ public sealed partial class MainWindow : Window
         {
             args.Cancel = true;
             HideToTray();
+            NotificationService.ShowRunningInBackground();
             return;
         }
 
         ThemeService.ThemeChanged -= OnThemeChanged;
+        NotificationService.Shutdown();
         _vm.Dispose();
     }
 
@@ -188,14 +198,12 @@ public sealed partial class MainWindow : Window
         _vm.SelectedTabIndex = index;
         MixesView.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
         AudioFlowView.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
-        SoundboardView.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
 
         var activeStyle = (Style)RootGrid.Resources["NavItemActiveBtn"];
         var normalStyle = (Style)RootGrid.Resources["NavItemBtn"];
 
         NavMixesBtn.Style = index == 0 ? activeStyle : normalStyle;
         NavAudioFlowBtn.Style = index == 1 ? activeStyle : normalStyle;
-        NavSoundboardBtn.Style = index == 2 ? activeStyle : normalStyle;
 
         if (index == 1)
             _vm.RefreshActiveAppSessions();
@@ -203,7 +211,6 @@ public sealed partial class MainWindow : Window
 
     private void NavMixes_Click(object sender, RoutedEventArgs e) => SelectMainView(0);
     private void NavAudioFlow_Click(object sender, RoutedEventArgs e) => SelectMainView(1);
-    private void NavSoundboard_Click(object sender, RoutedEventArgs e) => SelectMainView(2);
 
     private void ToggleCompactWindow_Click(object sender, RoutedEventArgs e)
     {
@@ -311,12 +318,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void CreateSoundboardChannel_Click(object sender, RoutedEventArgs e)
-    {
-        _vm.CreateSoundboardChannelCommand.Execute(null);
-        CreateChannelFlyout.Hide();
-    }
-
     private void CreatePresetChannel_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string presetKey && !string.IsNullOrWhiteSpace(presetKey))
@@ -355,6 +356,16 @@ public sealed partial class MainWindow : Window
     #region Channel Configuration Modal
 
     private void OpenChannelConfig_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is ChannelStripModel ch)
+        {
+            SelectModalTab(0);
+            _vm.OpenChannelConfig(ch, 0);
+            SyncModalDeviceCombos(ch);
+        }
+    }
+
+    private void EditChannel_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement fe && fe.Tag is ChannelStripModel ch)
         {
@@ -407,6 +418,7 @@ public sealed partial class MainWindow : Window
 
     private void CloseChannelConfigModal_Click(object sender, RoutedEventArgs e)
     {
+        ChannelIconFlyout.Hide();
         _vm.IsChannelConfigModalOpen = false;
     }
 
@@ -435,18 +447,49 @@ public sealed partial class MainWindow : Window
     private void ModalAppsTab_Click(object sender, RoutedEventArgs e) => SelectModalTab(0);
     private void ModalEffectsTab_Click(object sender, RoutedEventArgs e) => SelectModalTab(1);
 
-    private void CycleChannelColorAndIcon_Click(object sender, RoutedEventArgs e)
+    // Channel window "..." picker (saved by the config auto-save)
+    private void ChannelIcon_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (_vm.SelectedConfigChannel == null) return;
-        var ch = _vm.SelectedConfigChannel;
-
-        int cIdx = Array.IndexOf(ChannelColorPalette, ch.AccentHex);
-        ch.AccentHex = ChannelColorPalette[(cIdx + 1) % ChannelColorPalette.Length];
-
-        int iIdx = Array.IndexOf(ChannelIconPalette, ch.Icon);
-        ch.Icon = ChannelIconPalette[(iIdx + 1) % ChannelIconPalette.Length];
-        _vm.SaveConfig();
+        if (_vm.SelectedConfigChannel != null && e.ClickedItem is string glyph)
+            _vm.SelectedConfigChannel.Icon = glyph;
     }
+
+    private void ChannelColor_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (_vm.SelectedConfigChannel != null && e.ClickedItem is string hex)
+            _vm.SelectedConfigChannel.AccentHex = hex;
+    }
+
+    #region Mix Settings Window
+
+    private void EditMix_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } && int.TryParse(tag, out int index))
+            _vm.OpenMixConfig(index);
+    }
+
+    private void CloseMixConfigModal_Click(object sender, RoutedEventArgs e) => _vm.CloseMixConfig();
+
+    private void MixIcon_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (_vm.SelectedConfigMix != null && e.ClickedItem is string glyph)
+            _vm.SelectedConfigMix.Icon = glyph;
+    }
+
+    private void RemoveMixOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string deviceId })
+            _vm.RemoveMixExtraOutput(deviceId);
+    }
+
+    private void MixAddOutputCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Adding refills the combo's list, so do it after this selection event
+        if (MixAddOutputCombo.SelectedItem is AudioDeviceInfo device)
+            DispatcherQueue.TryEnqueue(() => _vm.AddMixExtraOutput(device.Id));
+    }
+
+    #endregion
 
     private void ToggleAddAppInline_Click(object sender, RoutedEventArgs e)
     {
@@ -650,12 +693,6 @@ public sealed partial class MainWindow : Window
         _vm.IsSettingsOpen = true;
     }
 
-    private void OpenPluginsSettings_Click(object sender, RoutedEventArgs e)
-    {
-        SelectSettingsTab(2);
-        _vm.IsSettingsOpen = true;
-    }
-
     private void SetTabGeneral_Click(object sender, RoutedEventArgs e) => SelectSettingsTab(0);
     private void SetTabDevices_Click(object sender, RoutedEventArgs e) => SelectSettingsTab(1);
     private void SetTabEffects_Click(object sender, RoutedEventArgs e) => SelectSettingsTab(2);
@@ -814,62 +851,6 @@ public sealed partial class MainWindow : Window
             {
                 _vm.RouteApplicationToChannel(app, channel);
             }
-        }
-    }
-
-    #endregion
-
-    #region Soundboard Actions
-
-    private void TriggerSoundPad_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is SoundPadModel pad)
-        {
-            _vm.TriggerPadCommand.Execute(pad);
-        }
-    }
-
-    private void AddSoundPad_Click(object sender, RoutedEventArgs e)
-    {
-        var newPad = new SoundPadModel
-        {
-            Name = "New Sound Pad",
-            Emoji = "🔥",
-            ColorHex = "#00E5FF",
-            Volume = 0.90f
-        };
-
-        var dlg = new PadEditDialog(newPad, _ =>
-        {
-            _vm.Config.SoundPads.Add(newPad);
-            _vm.SoundPads.Add(newPad);
-            _vm.Hotkeys.RebindAll(_vm.SoundPads);
-            _vm.SaveConfig();
-        });
-        dlg.Activate();
-    }
-
-    private void EditSoundPad_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is SoundPadModel pad)
-        {
-            var dlg = new PadEditDialog(pad, _ =>
-            {
-                _vm.Hotkeys.RebindAll(_vm.SoundPads);
-                _vm.SaveConfig();
-            });
-            dlg.Activate();
-        }
-    }
-
-    private void DeleteSoundPad_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is SoundPadModel pad)
-        {
-            _vm.SoundPads.Remove(pad);
-            _vm.Config.SoundPads.Remove(pad);
-            _vm.Hotkeys.RebindAll(_vm.SoundPads);
-            _vm.SaveConfig();
         }
     }
 

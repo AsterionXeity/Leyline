@@ -20,13 +20,37 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>Assets\Leyline.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\Leyline.ico;Assets\Leyline.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+  </ItemGroup>
+
+  <!--
+    Leyline Virtual Audio driver package (driver\LeylineVAD\out\<Configuration>, produced by Build-Driver.ps1 and
+    Package-Driver.ps1) ships in a Driver\ folder next to Leyline.exe. The app installs or updates the driver
+    from there. Falls back to the other configuration's package for local builds.
+  -->
+  <PropertyGroup>
+    <LeylineDriverOut>$(MSBuildThisFileDirectory)..\..\driver\LeylineVAD\out\</LeylineDriverOut>
+    <LeylineDriverPackageDir Condition="Exists('$(LeylineDriverOut)$(Configuration)\LeylineVAD.inf')">$(LeylineDriverOut)$(Configuration)\</LeylineDriverPackageDir>
+    <LeylineDriverPackageDir Condition="'$(LeylineDriverPackageDir)' == '' and Exists('$(LeylineDriverOut)Release\LeylineVAD.inf')">$(LeylineDriverOut)Release\</LeylineDriverPackageDir>
+    <LeylineDriverPackageDir Condition="'$(LeylineDriverPackageDir)' == '' and Exists('$(LeylineDriverOut)Debug\LeylineVAD.inf')">$(LeylineDriverOut)Debug\</LeylineDriverPackageDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(LeylineDriverPackageDir)' != ''">
+    <Content Include="$(LeylineDriverPackageDir)LeylineVAD.inf;$(LeylineDriverPackageDir)LeylineVAD.sys;$(LeylineDriverPackageDir)leylinevad.cat;$(LeylineDriverPackageDir)LeylineTestCert.cer"
+             Link="Driver\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
