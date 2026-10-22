@@ -1,0 +1,225 @@
+;
+; LeylineVAD.inf - Leyline Virtual Audio.
+;
+; Derived from the Microsoft SysVAD sample (ComponentizedAudioSample.inx), MS-PL.
+; One root-enumerated device exposing one render + capture endpoint pair per Leyline cable; each
+; cable loops its render audio to its capture endpoint.
+;
+; The blocks between ";@@BEGIN" and ";@@END" markers are generated from LEYLINE_CABLES in
+; ..\LeylineShared.h by Update-InfCables.ps1 (run by Build-Driver.ps1). Edit the cable list there.
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = MEDIA
+Provider    = %ProviderName%
+ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+DriverVer   = 10/22/2026, 0.2.0.0
+CatalogFile = LeylineVAD.cat
+PnpLockDown = 1
+
+[SourceDisksNames]
+222 = %DiskName%,"",222
+
+[SourceDisksFiles]
+LeylineVAD.sys = 222
+
+[Manufacturer]
+%MfgName% = Leyline,NT$ARCH$.10.0...19041
+
+[Leyline.NT$ARCH$.10.0...19041]
+%Leyline.DeviceDesc% = LeylineVAD, Root\LeylineVAD
+
+[DestinationDirs]
+LeylineVAD.CopyList = 13 ; 13 = package's DriverStore directory
+
+;======================================================
+; Device
+;======================================================
+[LeylineVAD.CopyList]
+LeylineVAD.sys
+
+[LeylineVAD.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,LeylineVAD.sys
+
+HKR,Drivers,SubClasses,,"wave,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%Leyline.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%Leyline.DeviceDesc%
+
+; Endpoint names: each cable's jack pins carry the cable's name GUID.
+;@@BEGIN CABLE NAMES
+HKR,%MEDIA_CATEGORIES%\{6759668c-b4fe-4279-906a-60a84642e158},Name,,"System"
+HKR,%MEDIA_CATEGORIES%\{6827af89-6539-4b18-8464-772a6af3d03f},Name,,"Game"
+HKR,%MEDIA_CATEGORIES%\{1d126417-2c4c-4601-98a6-5fc12a73d85d},Name,,"Browser"
+HKR,%MEDIA_CATEGORIES%\{af536979-3d71-454a-a6d1-6cebd231ac5a},Name,,"Music"
+HKR,%MEDIA_CATEGORIES%\{49bc5886-398a-48fa-b882-fedd3c85cf46},Name,,"Voice Chat"
+HKR,%MEDIA_CATEGORIES%\{d5c6af84-48b0-4b37-9025-1e850ce7aa92},Name,,"Stream Mix"
+HKR,%MEDIA_CATEGORIES%\{c4f743eb-3521-4c8a-99c8-5c05a9a06519},Name,,"Microphone"
+;@@END CABLE NAMES
+
+[LeylineVAD.NT]
+Include = ks.inf,wdmaudio.inf
+Needs   = KS.Registration, WDMAUDIO.Registration
+CopyFiles = LeylineVAD.CopyList
+AddReg    = LeylineVAD.AddReg
+
+[LeylineVAD.NT.Interfaces]
+; Per cable: render side (SysVAD HDMI filter, no offload pin) and capture side (SysVAD mic-in filter).
+;@@BEGIN CABLE INTERFACES
+; System
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderSystem",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderSystem",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderSystem",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderSystem",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderSystem",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureSystem", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureSystem", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureSystem", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureSystem", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureSystem", Leyline.I.TopoCapture
+; Game
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderGame",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderGame",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderGame",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderGame",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderGame",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureGame", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureGame", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureGame", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureGame", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureGame", Leyline.I.TopoCapture
+; Browser
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderBrowser",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderBrowser",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderBrowser",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderBrowser",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderBrowser",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureBrowser", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureBrowser", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureBrowser", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureBrowser", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureBrowser", Leyline.I.TopoCapture
+; Music
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderMusic",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderMusic",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderMusic",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderMusic",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderMusic",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureMusic", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureMusic", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureMusic", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureMusic", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureMusic", Leyline.I.TopoCapture
+; Voice Chat
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderVoiceChat",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderVoiceChat",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderVoiceChat",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderVoiceChat",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderVoiceChat",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureVoiceChat", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureVoiceChat", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureVoiceChat", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureVoiceChat", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureVoiceChat", Leyline.I.TopoCapture
+; Stream Mix
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderStreamMix",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderStreamMix",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderStreamMix",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderStreamMix",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderStreamMix",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureStreamMix", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureStreamMix", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureStreamMix", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureStreamMix", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureStreamMix", Leyline.I.TopoCapture
+; Microphone
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveRenderMicrophone",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_RENDER%,   "WaveRenderMicrophone",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_REALTIME%, "WaveRenderMicrophone",  Leyline.I.WaveRender
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoRenderMicrophone",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoRenderMicrophone",  Leyline.I.TopoRender
+AddInterface = %KSCATEGORY_AUDIO%,    "WaveCaptureMicrophone", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_CAPTURE%,  "WaveCaptureMicrophone", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_REALTIME%, "WaveCaptureMicrophone", Leyline.I.WaveCapture
+AddInterface = %KSCATEGORY_AUDIO%,    "TopoCaptureMicrophone", Leyline.I.TopoCapture
+AddInterface = %KSCATEGORY_TOPOLOGY%, "TopoCaptureMicrophone", Leyline.I.TopoCapture
+;@@END CABLE INTERFACES
+
+[LeylineVAD.NT.Services]
+AddService = LeylineVAD,0x00000002,LeylineVAD.Service
+
+[LeylineVAD.Service]
+DisplayName   = %Leyline.SvcDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %13%\LeylineVAD.sys
+
+[LeylineVAD.NT.HW]
+AddReg = LeylineVAD.HW.AddReg
+
+[LeylineVAD.HW.AddReg]
+; FILE_DEVICE_SOUND
+HKR,,DeviceType,0x10001,0x0000001D
+; SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_RWX_RES_RWX
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GRGWGX;;;BA)(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)"
+
+[LeylineVAD.NT.Wdf]
+KmdfService = LeylineVAD, LeylineVAD.WdfSect
+
+[LeylineVAD.WdfSect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+;======================================================
+; Interfaces (shared by every cable)
+;======================================================
+[Leyline.I.WaveRender]
+AddReg = Leyline.I.Wave.AddReg
+
+[Leyline.I.WaveCapture]
+AddReg = Leyline.I.Wave.AddReg
+
+[Leyline.I.Wave.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+
+[Leyline.I.TopoRender]
+AddReg = Leyline.I.Topo.AddReg
+
+[Leyline.I.TopoCapture]
+AddReg = Leyline.I.Topo.AddReg
+
+[Leyline.I.Topo.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%Leyline.DeviceDesc%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+; Pull (event-driven) mode
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+;======================================================
+; Strings
+;======================================================
+[Strings]
+; Non-localizable
+Proxy.CLSID          = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE   = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME  = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY  = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY       = "{00000000-0000-0000-0000-000000000000}"
+
+PKEY_AudioEndpoint_Association               = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"
+
+MEDIA_CATEGORIES     = "MediaCategories"
+
+; Localizable
+ProviderName         = "Leyline"
+MfgName              = "Leyline"
+DiskName             = "Leyline Virtual Audio Driver Disk"
+Leyline.DeviceDesc   = "Leyline Virtual Audio"
+Leyline.SvcDesc      = "Leyline Virtual Audio Driver"

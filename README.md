@@ -1,28 +1,28 @@
-# Leyline  Virtual Audio Router (Alpha) 
+# Leyline — Virtual Audio Router, Dual-Bus Mixer, Soundboard & VST Host
 
 **Leyline** is a native Windows 10 & Windows 11 studio audio routing and mixing application inspired by Elgato Wave Link.
 
 ## Key Features
 
 1. **Dual-Bus Studio Mixing (Monitor Mix & Stream Mix)**
-   - Every input channel strip has independent **Monitor Mix** (personal headphones/speakers) and **Stream Mix** (virtual broadcast output) faders, mute buttons, fader-link toggle, and real-time stereo L/R peak meters.
-   - Built-in **Stream Mix WAV Recorder** (`Documents\VoidPatch Recordings`).
+   - Every input channel strip has independent **🎧 Monitor Mix** (personal headphones/speakers) and **📡 Stream Mix** (virtual broadcast output) faders, mute buttons, fader-link toggle, and real-time stereo L/R peak meters.
+   - Built-in **Stream Mix WAV Recorder** (`My Documents\Leyline Recordings`).
 
-2. **Virtual Audio Device Routing & Direct App Process Capture (Windows 10 & 11)**
-   - **App Router Tab**: Uses Windows `IAudioPolicyConfigFactory` COM interop to route any active application (`Chrome`, `Spotify`, `Discord`, `Games`, etc.) to any Virtual Audio Bus on the fly without leaving VoidPatch.
-   - **Direct Process Capture**: Uses Windows 10 (2004+) / Windows 11 `ActivateAudioInterfaceAsync` (`VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`) to capture individual `.exe` application audio streams directly into a mixer strip without changing their Windows playback device.
+2. **Virtual Audio Device Routing (Primary) & Process Loopback Fallback (Windows 10 & 11)**
+   - **Automatic Virtual Endpoint Routing**: Choosing an application (`Chrome`, `Spotify`, `Discord`, `Games`, `OBS`, etc.) in Leyline's menus automatically binds the channel to its corresponding `Leyline ... (Leyline Virtual Audio)` playback device and routes the application's Windows output directly to that virtual endpoint via `IAudioPolicyConfigFactory` (`PolicyConfigClient.SetApplicationOutputEndpoint`). Removing an app or channel automatically restores it to the Windows Default Output.
+   - **Direct Process Capture Fallback**: Retains Windows 10 (2004+) / Windows 11 `ActivateAudioInterfaceAsync` (`VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`) as a zero-driver fallback when the virtual audio endpoints are not yet installed.
 
-3. **VoidPatch Virtual Audio Driver & Endpoint Provisioner**
-   - Includes the **VoidPatch Virtual Audio Driver Manager** (under the **VST & VIRTUAL DRIVER** tab and `driver\VoidPatchVAD\`) which provisions and brands your Windows CoreAudio virtual buses as:
-     - `VoidPatch System (VoidPatch Virtual Audio)`
-     - `VoidPatch Game (VoidPatch Virtual Audio)`
-     - `VoidPatch Browser (VoidPatch Virtual Audio)`
-     - `VoidPatch Music (VoidPatch Virtual Audio)`
-     - `VoidPatch Voice Chat (VoidPatch Virtual Audio)`
-     - `VoidPatch Stream Mix (VoidPatch Virtual Audio)`
-     - `VoidPatch Mic FX (VoidPatch Virtual Audio)`
-   - Includes 1-click backup & restore to original channels names at any time.
-   - Complete WDM/WaveRT kernel driver source & INF package included in `\VoidPatch\driver\VoidPatchVAD\`.
+3. **Leyline Virtual Audio Driver & Endpoint Provisioner**
+   - Includes the **Leyline Virtual Audio Driver Manager** (under the **⚡ VST & VIRTUAL DRIVER** tab and `driver\LeylineVAD\`) which provisions and brands your Windows CoreAudio virtual buses as:
+     - `Leyline System (Leyline Virtual Audio)`
+     - `Leyline Game (Leyline Virtual Audio)`
+     - `Leyline Browser (Leyline Virtual Audio)`
+     - `Leyline Music (Leyline Virtual Audio)`
+     - `Leyline Voice Chat (Leyline Virtual Audio)`
+     - `Leyline Stream Mix (Leyline Virtual Audio)`
+     - `Leyline Mic FX (Leyline Virtual Audio)`
+   - Includes 1-click backup & restore to original endpoint names at any time.
+   - Complete WDM/WaveRT kernel driver source & INF package included in `G:\Leyline\driver\LeylineVAD\`.
 
 4. **VST2 / VST3 Hosting + Zero-Latency**
    - **Built-in Studio DSP Rack** on every channel strip & master bus:
@@ -40,6 +40,6 @@
 
 ## Running & Installing
 
-- **Launch App**: `G:\VoidPatch\publish\VoidPatch.exe` (or via the **VoidPatch** shortcut on your Desktop / Start Menu)
-- **Re-run Installer**: `powershell -ExecutionPolicy Bypass -File G:\VoidPatch\Install-VoidPatch.ps1`
-- **Brand Virtual Audio Driver Endpoints**: Click **⚡ Brand & Activate VoidPatch Audio Endpoints (UAC)** inside the **VST & VIRTUAL DRIVER** tab, or run `G:\VoidPatch\driver\VoidPatchVAD\Install-VoidPatchDriver.ps1`.
+- **Launch App**: `G:\Leyline\publish\Leyline.exe` (or via the **Leyline** shortcut on your Desktop / Start Menu)
+- **Re-run Installer**: `powershell -ExecutionPolicy Bypass -File G:\Leyline\Install-Leyline.ps1`
+- **Brand Virtual Audio Driver Endpoints**: Click **⚡ Brand & Activate Leyline Audio Endpoints (UAC)** inside the **VST & VIRTUAL DRIVER** tab, or run `G:\Leyline\driver\LeylineVAD\Install-LeylineDriver.ps1`.

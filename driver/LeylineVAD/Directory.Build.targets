@@ -1,0 +1,12 @@
+<Project>
+  <!--
+    The driver is based on the April 2021 (Windows 10) SysVAD, which allocates with ExAllocatePoolWithTag.
+    Newer WDKs mark that deprecated (C4996, an error under warnings-as-errors) in favour of ExAllocatePool2,
+    but it is still exported by every Windows 10 / 11 kernel, so silence just that warning.
+  -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
