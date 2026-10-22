@@ -14,6 +14,15 @@ namespace Leyline.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly DispatcherQueue? _dispatcherQueue;
+    private readonly ConfigAutoSaver? _autoSaver;
+
+    // View-model settings that write straight to Config without saving it
+    private static readonly HashSet<string> AutoSavedViewModelProperties =
+    [
+        nameof(MonitorMasterVolume), nameof(StreamMasterVolume),
+        nameof(IsMonitorMasterMuted), nameof(IsStreamMasterMuted),
+        nameof(SoundboardMasterVolume)
+    ];
     // Meters update on the UI's frame callback, at most this often (120 per second)
     private const double MinMeterIntervalMs = 8.0;
     private TimeSpan _lastMeterFrame;
@@ -786,7 +795,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshAudioDevices();
         ConnectMixOutputCables();
         InitializeChannelsAndPads();
-        SaveConfig();   // record the channels' cable bindings
+
+        if (_dispatcherQueue != null)
+        {
+            _autoSaver = new ConfigAutoSaver(_dispatcherQueue, SaveConfig);
+            PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName != null && AutoSavedViewModelProperties.Contains(e.PropertyName))
+                    _autoSaver.ScheduleSave();
+            };
+        }
+        SaveConfig();   // record the channels' cable bindings; also starts the auto-save watch
         RefreshDriverStatus();
         RefreshActiveAppSessions();
         ScanVstPlugins(forceDeepProbe: false);
@@ -1539,6 +1558,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void SaveConfig()
     {
         ConfigService.Save(Config);
+        _autoSaver?.Watch(Config);   // channels, mixes and pads added since the last save
     }
 
     // Runs once per rendered frame (not while the window is hidden), so meters move at the display's frame rate

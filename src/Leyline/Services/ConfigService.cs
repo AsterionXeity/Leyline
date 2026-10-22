@@ -49,13 +49,18 @@ public static class ConfigService
         return defaultConfig;
     }
 
+    private static string? _lastSavedJson;
+
     public static void Save(AppConfig config)
     {
         try
         {
             string path = GetConfigFilePath();
             string json = JsonSerializer.Serialize(config, JsonOptions);
+            if (json == _lastSavedJson && File.Exists(path))
+                return;   // auto-save runs after every change; skip rewriting an identical file
             File.WriteAllText(path, json);
+            _lastSavedJson = json;
         }
         catch
         {
