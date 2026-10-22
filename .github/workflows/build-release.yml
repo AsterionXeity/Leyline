@@ -1,16 +1,25 @@
 name: Build & Publish Leyline Release
 
+# Every run builds the driver, the app and Leyline-Setup.exe and uploads them as a workflow artifact.
+# A GitHub release is published only for a version, each in its own release that is never overwritten:
+#   - push a tag:  git tag v2.0.1 && git push origin v2.0.1
+#   - or Actions > Build & Publish Leyline Release > Run workflow, with "version" filled in (creates the tag)
+# Pushes to main and pull requests only build.
 on:
   push:
     branches:
       - main
     tags:
       - "v*"
-  # Pull requests into main build and upload Leyline-Setup.exe as a workflow artifact, without publishing a release.
   pull_request:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Publish a release for this version (e.g. 2.0.1). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -34,14 +43,33 @@ jobs:
         id: version
         shell: pwsh
         run: |
+          $requested = "${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}".Trim().TrimStart("v")
+          $release = $false
           if ("${{ github.ref_type }}" -eq "tag") {
             $version = "${{ github.ref_name }}".TrimStart("v")
+            $release = $true
+          } elseif ($requested) {
+            $version = $requested
+            $release = $true
           } else {
             $base = ([xml](Get-Content src/Leyline/Leyline.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
             $version = "$base.${{ github.run_number }}"
           }
+          if ($release -and $version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Version '$version' is not like 2.0.1." }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "Leyline $version"
+          "release=$($release.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "Leyline $version$(if ($release) { ' (release)' })"
+
+      # Never overwrite a published version: stop before building if its release already exists
+      - name: Check the release does not exist yet
+        if: steps.version.outputs.release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release v${{ steps.version.outputs.version }} already exists. Publish a new version number instead." }
+          $global:LASTEXITCODE = 0
 
       # ---- Leyline Virtual Audio driver --------------------------------------------------------------
       - name: Restore WDK NuGet packages
@@ -89,15 +117,18 @@ jobs:
             dist/Leyline-Setup.exe
             dist/Leyline-win-x64-portable.zip
 
-      - name: Create or Update GitHub Release
-        if: github.event_name != 'pull_request'
+      - name: Publish GitHub Release
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
-          name: ${{ github.ref_type == 'tag' && format('Leyline {0}', github.ref_name) || 'Leyline Latest Build' }}
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Leyline ${{ steps.version.outputs.version }}
+          make_latest: true
+          fail_on_unmatched_files: true
           body: |
             ## Leyline ${{ steps.version.outputs.version }}
-            Audio router, matrix mixer, soundboard and VST host for Windows 10 (2004+) and 11.
+            Audio router, matrix mixer and VST host for Windows 10 (2004+) and 11.
             Built by GitHub Actions from commit `${{ github.sha }}`.
 
             ### Install

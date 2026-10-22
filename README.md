@@ -1,4 +1,4 @@
-# Leyline — Virtual Audio Router, Dual-Bus Mixer, Soundboard & VST Host
+# Leyline — Virtual Audio Router, Dual-Bus Mixer & VST Host
 
 **Leyline** is a native Windows 10 & Windows 11 studio audio routing and mixing application inspired by Elgato Wave Link.
 
@@ -30,10 +30,6 @@
      - Automatically scans `C:\Program Files\Common Files\VST3` and VST2 folders.
      - Hosts native plugin GUI editors plus a parameter slider rack.
 
-5. **Built-in Soundboard with Global Hotkeys** (broken)
-   - ~~Pre-loaded with 8 synthesized studio sound effects (`MLG Airhorn`, `Censor Beep`, `Sub Bass Drop`, `Ba-Dum Tss`, `Victory Fanfare`, `Sci-Fi Laser`, `8-Bit Coin`, `Dramatic Hit`) and~~ supports `.wav`, `.mp3`, `.ogg`, `.flac`, and `.m4a`.
-   - Per-pad volume, playback mode (`Stop Toggle`, `One-Shot`, `Overlap`, `Loop`), independent Monitor/Stream routing, and system-wide **Global Hotkeys** (`Ctrl+Shift+1..8`, `Ctrl+Shift+0` Panic Stop).
-
 ## Installing
 
 1. Download **`Leyline-Setup.exe`** from the [latest release](https://github.com/AsterionXeity/Leyline/releases) and run it.
@@ -55,4 +51,13 @@ bcdedit /set testsigning on
   driver/LeylineVAD/Package-Driver.ps1
   ```
   The app bundles `driver/LeylineVAD/out/<Configuration>` in its `Driver\` folder. Bump `LeylineDriverVersion` in `driver/LeylineVAD/Directory.Build.props` whenever the driver changes, so installed copies are offered the update.
-- **Installer**: GitHub Actions (`.github/workflows/build-release.yml`) builds the driver, the app and `Leyline-Setup.exe` (Inno Setup, `installer/Leyline.iss`) on every push to `main` and every `v*` tag.
+- **Installer**: GitHub Actions (`.github/workflows/build-release.yml`) builds the driver, the app and `Leyline-Setup.exe` (Inno Setup, `installer/Leyline.iss`) for every push to `main` and every pull request, and attaches them to the run as an artifact.
+
+## Publishing a release
+
+Each working version gets its own GitHub release; a published version is never overwritten. Either:
+
+- push a version tag: `git tag v2.0.1` then `git push origin v2.0.1`, or
+- on GitHub, **Actions → Build & Publish Leyline Release → Run workflow**, and fill in **version** (for example `2.0.1`).
+
+The release is published only if the driver, the app and the installer all build. A version that already has a release stops the run: pick the next number.
