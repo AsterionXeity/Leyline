@@ -12,6 +12,11 @@ public sealed class AudioEngine : IDisposable
     public static readonly WaveFormat Format = ChannelStripProcessor.EngineWaveFormat;
 
     private readonly object _engineLock = new();
+    // Shared-mode output buffer for the monitor, Stream Mix and Mic Rec outputs. Measured Browser cable -> Stream Mix
+    // cable, 10, 15 and 20 ms gave the same end-to-end latency (Windows mixes in 10 ms periods), so this keeps the
+    // most headroom for effect chains. LowLatencyBufferReader keeps the per-mix buffers in front of it near empty.
+    private const int OutputLatencyMs = 20;
+
     private readonly List<ChannelStripProcessor> _channels = new();
 
     private readonly MixingSampleProvider _personalMixer;
@@ -241,7 +246,7 @@ public sealed class AudioEngine : IDisposable
                     return;
                 }
 
-                _monitorOut = new WasapiOut(target, AudioClientShareMode.Shared, true, 25);
+                _monitorOut = new WasapiOut(target, AudioClientShareMode.Shared, true, OutputLatencyMs);
                 _monitorOut.Init(GetMonitorSource(_listeningMixIndex));
                 _monitorOut.Play();
             }
@@ -309,7 +314,7 @@ public sealed class AudioEngine : IDisposable
                     var target = enumerator.GetDevice(deviceId);
                     if (target != null && target.State == DeviceState.Active && target.DataFlow == DataFlow.Render)
                     {
-                        _micRecOut = new WasapiOut(target, AudioClientShareMode.Shared, true, 25);
+                        _micRecOut = new WasapiOut(target, AudioClientShareMode.Shared, true, OutputLatencyMs);
                         _micRecOut.Init(_micRecMasterProvider);
                         _micRecOut.Play();
                     }
@@ -372,7 +377,7 @@ public sealed class AudioEngine : IDisposable
                 var target = enumerator.GetDevice(deviceId);
                 if (target != null && target.State == DeviceState.Active && target.DataFlow == DataFlow.Render)
                 {
-                    _streamOut = new WasapiOut(target, AudioClientShareMode.Shared, true, 35);
+                    _streamOut = new WasapiOut(target, AudioClientShareMode.Shared, true, OutputLatencyMs);
                     _streamOut.Init(_streamMasterProvider);
                     _streamOut.Play();
                 }
@@ -623,7 +628,7 @@ public sealed class AudioEngine : IDisposable
                 DiscardOnBufferOverflow = true,
                 ReadFully = true
             };
-            return _monitorTap.ToSampleProvider();
+            return new LowLatencyBufferReader(_monitorTap);
         }
 
         public void DecayMeters(float decay)

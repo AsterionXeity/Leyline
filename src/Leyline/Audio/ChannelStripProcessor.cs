@@ -510,7 +510,7 @@ public sealed class ChannelStripProcessor : IDisposable
         public BusBranchSampleProvider(BufferedWaveProvider buffer, Func<float> gainProvider)
         {
             _buffer = buffer;
-            _source = buffer.ToSampleProvider();
+            _source = new LowLatencyBufferReader(buffer);
             _gainProvider = gainProvider;
         }
 

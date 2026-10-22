@@ -377,6 +377,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void EditChannel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is ChannelStripModel ch)
+        {
+            SelectModalTab(0);
+            _vm.OpenChannelConfig(ch, 0);
+            SyncModalDeviceCombos(ch);
+        }
+    }
+
     private void OpenChannelEffects_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement fe && fe.Tag is ChannelStripModel ch)
