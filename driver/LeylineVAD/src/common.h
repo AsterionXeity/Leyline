@@ -400,6 +400,9 @@ typedef struct _ENDPOINT_MINIPAIR
     AUDIOMODULE_DESCRIPTOR *        ModuleList;
     ULONG                           ModuleListCount;
     const GUID *                    ModuleNotificationDeviceId;
+
+    // Leyline: 1-based cable id (see LeylineCable.h); 0 (LEYLINE_NO_CABLE) for non-cable endpoints.
+    ULONG                           LeylineCableId;
 } ENDPOINT_MINIPAIR;
 
 //=============================================================================

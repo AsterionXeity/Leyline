@@ -18,6 +18,9 @@ Abstract:
 
 #include <sysvad.h>
 #include "basetopo.h"
+#include "kshelper.h"
+#include "LeylineCable.h"
+#include "LeylineShared.h"
 
 //=============================================================================
 #pragma code_seg("PAGE")
@@ -56,6 +59,9 @@ Return Value:
     
     ASSERT(DeviceMaxChannels > 0);
     m_DeviceMaxChannels = DeviceMaxChannels;
+
+    m_LeylineCableId    = LEYLINE_NO_CABLE;
+    m_LeylineJackPin    = ULONG(-1);
 } // CMiniportTopologySYSVAD
 
 CMiniportTopologySYSVAD::~CMiniportTopologySYSVAD
@@ -79,6 +85,12 @@ Return Value:
     PAGED_CODE();
 
     DPF_ENTER(("[%s]",__FUNCTION__));
+
+    // Stop receiving connection changes before the event interface goes away.
+    if (m_LeylineCableId != LEYLINE_NO_CABLE)
+    {
+        LeylineCableUnregisterJack(m_LeylineCableId, this);
+    }
 
     SAFE_RELEASE(m_AdapterCommon);
     SAFE_RELEASE(m_PortEvents);
@@ -689,3 +701,211 @@ Arguments:
  
 #pragma code_seg()
 
+
+//=============================================================================
+// Leyline cables
+//=============================================================================
+
+#pragma code_seg("PAGE")
+VOID
+CMiniportTopologySYSVAD::LeylineAttach
+(
+    _In_ ULONG CableId,
+    _In_ ULONG JackPinId
+)
+/*++
+Routine Description:
+  Binds this topology filter to a Leyline cable: its jack follows the cable's connection state.
+--*/
+{
+    PAGED_CODE();
+
+    m_LeylineCableId = CableId;
+    m_LeylineJackPin = JackPinId;
+
+    if (CableId != LEYLINE_NO_CABLE)
+    {
+        LeylineCableRegisterJack(CableId, this, LeylineJackChanged);
+    }
+}
+
+#pragma code_seg()
+VOID
+CMiniportTopologySYSVAD::LeylineJackChanged
+(
+    _In_ PVOID Context
+)
+/*++
+Routine Description:
+  The cable was connected or disconnected: tell Windows to re-read the jack description.
+--*/
+{
+    CMiniportTopologySYSVAD* This = static_cast<CMiniportTopologySYSVAD*>(Context);
+
+    if (This->m_PortEvents == NULL)
+    {
+        return;     // not initialized yet; Windows reads the current state when it first queries the jack
+    }
+
+    This->GenerateEventList(
+        (GUID*)&KSEVENTSETID_PinCapsChange,
+        KSEVENT_PINCAPS_JACKINFOCHANGE,
+        TRUE,                           // pin event
+        This->m_LeylineJackPin,
+        FALSE,                          // not a node event
+        ULONG(-1));
+}
+
+#pragma code_seg("PAGE")
+NTSTATUS
+LeylineTopoPropertyHandler
+(
+    _In_        PPCPROPERTY_REQUEST         PropertyRequest,
+    _In_        CMiniportTopologySYSVAD    *Miniport,
+    _In_        ULONG                       cJackDescriptions,
+    _In_reads_(cJackDescriptions) PKSJACK_DESCRIPTION *JackDescriptions
+)
+{
+    PAGED_CODE();
+
+    ASSERT(PropertyRequest);
+    ASSERT(Miniport);
+
+    NTSTATUS    ntStatus = STATUS_INVALID_DEVICE_REQUEST;
+    ULONG       cableId  = Miniport->GetLeylineCableId();
+    const GUID* set      = PropertyRequest->PropertyItem->Set;
+    ULONG       id       = PropertyRequest->PropertyItem->Id;
+
+    if (IsEqualGUIDAligned(*set, KSPROPSETID_Leyline) && id == KSPROPERTY_LEYLINE_CABLE_CONNECTED)
+    {
+        if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT)
+        {
+            return PropertyHandler_BasicSupport(PropertyRequest, KSPROPERTY_TYPE_BASICSUPPORT | KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET, VT_UI4);
+        }
+
+        if (PropertyRequest->ValueSize == 0)
+        {
+            PropertyRequest->ValueSize = sizeof(ULONG);
+            return STATUS_BUFFER_OVERFLOW;
+        }
+        if (PropertyRequest->ValueSize < sizeof(ULONG))
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        if (PropertyRequest->Verb & KSPROPERTY_TYPE_GET)
+        {
+            *(PULONG)PropertyRequest->Value = LeylineCableIsConnected(cableId) ? 1 : 0;
+            PropertyRequest->ValueSize = sizeof(ULONG);
+            return STATUS_SUCCESS;
+        }
+
+        if (PropertyRequest->Verb & KSPROPERTY_TYPE_SET)
+        {
+            LeylineCableSetConnected(cableId, (*(PULONG)PropertyRequest->Value) != 0);
+            return STATUS_SUCCESS;
+        }
+
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    if (!IsEqualGUIDAligned(*set, KSPROPSETID_Jack) ||
+        (id != KSPROPERTY_JACK_DESCRIPTION && id != KSPROPERTY_JACK_DESCRIPTION2))
+    {
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    if (PropertyRequest->InstanceSize < sizeof(ULONG))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ULONG nPinId = *(PULONG(PropertyRequest->Instance));
+    if (nPinId >= cJackDescriptions || JackDescriptions[nPinId] == NULL)
+    {
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT)
+    {
+        return PropertyHandler_BasicSupport(PropertyRequest, KSPROPERTY_TYPE_BASICSUPPORT | KSPROPERTY_TYPE_GET, VT_ILLEGAL);
+    }
+
+    ULONG cbNeeded = sizeof(KSMULTIPLE_ITEM) +
+        ((id == KSPROPERTY_JACK_DESCRIPTION) ? sizeof(KSJACK_DESCRIPTION) : sizeof(KSJACK_DESCRIPTION2));
+
+    if (PropertyRequest->ValueSize == 0)
+    {
+        PropertyRequest->ValueSize = cbNeeded;
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    if (PropertyRequest->ValueSize < cbNeeded)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET))
+    {
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    PKSMULTIPLE_ITEM pMI = (PKSMULTIPLE_ITEM)PropertyRequest->Value;
+    pMI->Size  = cbNeeded;
+    pMI->Count = 1;
+
+    if (id == KSPROPERTY_JACK_DESCRIPTION)
+    {
+        PKSJACK_DESCRIPTION pDesc = (PKSJACK_DESCRIPTION)(pMI + 1);
+        RtlCopyMemory(pDesc, JackDescriptions[nPinId], sizeof(KSJACK_DESCRIPTION));
+        pDesc->IsConnected = LeylineCableIsConnected(cableId);
+    }
+    else
+    {
+        PKSJACK_DESCRIPTION2 pDesc = (PKSJACK_DESCRIPTION2)(pMI + 1);
+        RtlZeroMemory(pDesc, sizeof(KSJACK_DESCRIPTION2));
+        pDesc->DeviceStateInfo  = 0;
+        // Presence detection: IsConnected in KSJACK_DESCRIPTION reflects the cable's real state.
+        pDesc->JackCapabilities = JACKDESC2_PRESENCE_DETECT_CAPABILITY;
+    }
+
+    ntStatus = STATUS_SUCCESS;
+    return ntStatus;
+}
+
+#pragma code_seg("PAGE")
+NTSTATUS
+LeylineTopoEventHandler
+(
+    _In_        PPCEVENT_REQUEST            EventRequest,
+    _In_        CMiniportTopologySYSVAD    *Miniport
+)
+{
+    PAGED_CODE();
+
+    ASSERT(EventRequest);
+    ASSERT(Miniport);
+
+    switch (EventRequest->Verb)
+    {
+        case PCEVENT_VERB_SUPPORT:
+            break;
+
+        case PCEVENT_VERB_ADD:
+            if (EventRequest->EventEntry == NULL)
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+            Miniport->AddEventToEventList(EventRequest->EventEntry);
+            break;
+
+        case PCEVENT_VERB_REMOVE:
+            // Port class removes the entry; nothing to undo here.
+            break;
+
+        default:
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+#pragma code_seg()

@@ -82,5 +82,9 @@ CreateHdmiMiniportTopology(
 
 NTSTATUS PropertyHandler_HdmiTopoFilter(_In_ PPCPROPERTY_REQUEST PropertyRequest);
 
+// Leyline cable render side: jack (follows the cable's connection) and KSPROPSETID_Leyline.
+NTSTATUS PropertyHandler_LeylineRenderTopoFilter(_In_ PPCPROPERTY_REQUEST PropertyRequest);
+NTSTATUS EventHandler_LeylineRenderTopoFilter(_In_ PPCEVENT_REQUEST EventRequest);
+
 #endif // _SYSVAD_HDMITOPO_H_
 

@@ -94,6 +94,7 @@ protected:
     BOOLEAN                     m_bCapture;
     BOOLEAN                     m_bCableRender;     // Leyline: this stream feeds the cable
     BOOLEAN                     m_bCableCapture;    // Leyline: this stream records from the cable
+    ULONG                       m_ulLeylineCableId; // Leyline: the endpoint's cable (LEYLINE_NO_CABLE if none)
     BOOLEAN                     m_bUnregisterStream;
     ULONG                       m_ulDmaBufferSize;
     BYTE*                       m_pDmaBuffer;

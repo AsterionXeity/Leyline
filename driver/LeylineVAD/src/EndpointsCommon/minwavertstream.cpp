@@ -212,6 +212,7 @@ Return Value:
     m_bCapture = FALSE;
     m_bCableRender = FALSE;
     m_bCableCapture = FALSE;
+    m_ulLeylineCableId = LEYLINE_NO_CABLE;
     m_ulDmaBufferSize = 0;
     m_pDmaBuffer = NULL;
     m_ulNotificationsPerBuffer = 0;
@@ -297,9 +298,10 @@ Return Value:
     m_bCapture = Capture_;
     m_ulDmaMovementRate = pWfEx->nAvgBytesPerSec;
 
-    // Leyline: the system (host) pins are the two ends of the cable; loopback and offload pins are not.
-    m_bCableRender = !Capture_ && m_pMiniport->IsSystemRenderPin(Pin_);
-    m_bCableCapture = Capture_ && m_pMiniport->IsSystemCapturePin(Pin_);
+    // Leyline: the system (host) pins are the two ends of the endpoint's cable; loopback pins are not.
+    m_ulLeylineCableId = m_pMiniport->GetLeylineCableId();
+    m_bCableRender = m_ulLeylineCableId != LEYLINE_NO_CABLE && !Capture_ && m_pMiniport->IsSystemRenderPin(Pin_);
+    m_bCableCapture = m_ulLeylineCableId != LEYLINE_NO_CABLE && Capture_ && m_pMiniport->IsSystemCapturePin(Pin_);
 
     m_pDpc = (PRKDPC)ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(KDPC), MINWAVERTSTREAM_POOLTAG);
     if (!m_pDpc)
@@ -1316,7 +1318,7 @@ NTSTATUS CMiniportWaveRTStream::SetState
             if (m_bCableCapture)
             {
                 // Leyline: start recording near the newest cable audio, not from stale data.
-                LeylineCableResetReader();
+                LeylineCableResetReader(m_ulLeylineCableId);
             }
 
 #if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
@@ -1526,7 +1528,7 @@ ByteDisplacement - # of bytes to process.
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
         if (m_bCableCapture)
         {
-            LeylineCableRead(m_pDmaBuffer + bufferOffset, runWrite, m_pWfExt->Format.nSamplesPerSec);
+            LeylineCableRead(m_ulLeylineCableId, m_pDmaBuffer + bufferOffset, runWrite, m_pWfExt->Format.nSamplesPerSec);
         }
         else
         {
@@ -1564,7 +1566,7 @@ ByteDisplacement - # of bytes to process.
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
         if (m_bCableRender)
         {
-            LeylineCableWrite(m_pDmaBuffer + bufferOffset, runWrite, m_pWfExt->Format.nSamplesPerSec);
+            LeylineCableWrite(m_ulLeylineCableId, m_pDmaBuffer + bufferOffset, runWrite, m_pWfExt->Format.nSamplesPerSec);
         }
         else
         {

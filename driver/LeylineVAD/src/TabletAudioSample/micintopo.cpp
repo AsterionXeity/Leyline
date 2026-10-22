@@ -272,3 +272,35 @@ Return Value:
 
 #pragma code_seg()
 
+//=============================================================================
+#pragma code_seg("PAGE")
+NTSTATUS
+PropertyHandler_LeylineCaptureTopoFilter
+(
+    _In_ PPCPROPERTY_REQUEST PropertyRequest
+)
+{
+    PAGED_CODE();
+
+    // MajorTarget is a pointer to the miniport object (same cast as PropertyHandler_MicInTopoFilter).
+    PCMiniportTopology pMiniport = (PCMiniportTopology)PropertyRequest->MajorTarget;
+
+    return LeylineTopoPropertyHandler(PropertyRequest, pMiniport, ARRAYSIZE(MicInJackDescriptions), MicInJackDescriptions);
+}
+
+//=============================================================================
+#pragma code_seg("PAGE")
+NTSTATUS
+EventHandler_LeylineCaptureTopoFilter
+(
+    _In_ PPCEVENT_REQUEST EventRequest
+)
+{
+    PAGED_CODE();
+
+    PCMiniportTopology pMiniport = (PCMiniportTopology)EventRequest->MajorTarget;
+
+    return LeylineTopoEventHandler(EventRequest, pMiniport);
+}
+
+#pragma code_seg()

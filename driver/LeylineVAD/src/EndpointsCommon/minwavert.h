@@ -185,6 +185,12 @@ protected:
     PPORTCLSNOTIFICATIONS               m_pPortClsNotifications;
     PENDPOINT_MINIPAIR                  m_pMiniportPair;
 
+public:
+    // Leyline: the cable this endpoint belongs to (LEYLINE_NO_CABLE for non-cable endpoints).
+    ULONG GetLeylineCableId() const { return m_pMiniportPair->LeylineCableId; }
+
+protected:
+
 
 public:
     DECLARE_PROPERTYHANDLER(Get_SoundDetectorSupportedPatterns);

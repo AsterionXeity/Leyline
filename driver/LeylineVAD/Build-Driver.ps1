@@ -22,6 +22,9 @@ if (-not $vs) { throw 'No Visual Studio with the Windows Driver Kit component wa
 Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
 Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
+# Keep the INF's per-cable entries in sync with LEYLINE_CABLES.
+& (Join-Path $PSScriptRoot 'Update-InfCables.ps1')
+
 $src = Join-Path $PSScriptRoot 'src'
 foreach ($project in 'EndpointsCommon\EndpointsCommon.vcxproj', 'TabletAudioSample\TabletAudioSample.vcxproj') {
     msbuild (Join-Path $src $project) -m -nologo -v:minimal `

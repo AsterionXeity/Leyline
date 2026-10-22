@@ -18,6 +18,7 @@ Abstract:
 #include "simple.h"
 #include "minwavert.h"
 #include "mintopo.h"
+#include "LeylineCable.h"
 
 //=============================================================================
 #pragma code_seg("PAGE")
@@ -78,6 +79,12 @@ Return Value:
     if (NULL == obj)
     {
         return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // Leyline: the mic-in filter is a cable's capture side; its jack is the mic elements pin.
+    if (MiniportPair->DeviceType == eMicInDevice)
+    {
+        obj->LeylineAttach(MiniportPair->LeylineCableId, KSPIN_TOPO_MIC_ELEMENTS);
     }
     
     obj->AddRef();

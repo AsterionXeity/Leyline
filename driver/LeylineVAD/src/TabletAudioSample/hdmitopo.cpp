@@ -19,6 +19,7 @@ Abstract:
 #include "mintopo.h"
 #include "hdmitopo.h"
 #include "hdmitoptable.h"
+#include "LeylineCable.h"
 #include <ntstrsafe.h>
 
 
@@ -84,6 +85,9 @@ Return Value:
     {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
+
+    // Leyline: the HDMI filter is a cable's render side; its jack is the line-out pin.
+    obj->LeylineAttach(MiniportPair->LeylineCableId, KSPIN_TOPO_LINEOUT_DEST);
     
     obj->AddRef();
     *Unknown = reinterpret_cast<IUnknown*>(obj);
@@ -668,3 +672,35 @@ Return Value:
 
 #pragma code_seg()
 
+//=============================================================================
+#pragma code_seg("PAGE")
+NTSTATUS
+PropertyHandler_LeylineRenderTopoFilter
+(
+    _In_ PPCPROPERTY_REQUEST PropertyRequest
+)
+{
+    PAGED_CODE();
+
+    // MajorTarget is a pointer to the miniport object (same cast as PropertyHandler_HdmiTopoFilter).
+    PCHdmiMiniportTopology pMiniport = (PCHdmiMiniportTopology)PropertyRequest->MajorTarget;
+
+    return LeylineTopoPropertyHandler(PropertyRequest, pMiniport, ARRAYSIZE(HdmiJackDescriptions), HdmiJackDescriptions);
+}
+
+//=============================================================================
+#pragma code_seg("PAGE")
+NTSTATUS
+EventHandler_LeylineRenderTopoFilter
+(
+    _In_ PPCEVENT_REQUEST EventRequest
+)
+{
+    PAGED_CODE();
+
+    PCHdmiMiniportTopology pMiniport = (PCHdmiMiniportTopology)EventRequest->MajorTarget;
+
+    return LeylineTopoEventHandler(EventRequest, pMiniport);
+}
+
+#pragma code_seg()

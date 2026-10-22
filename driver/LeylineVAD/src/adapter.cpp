@@ -26,6 +26,7 @@ Abstract:
 
 #include "simple.h"
 #include "minipairs.h"
+#include "leylineendpoints.h"
 #ifdef SYSVAD_BTH_BYPASS
 #include "bthhfpminipairs.h"
 #endif // SYSVAD_BTH_BYPASS
@@ -335,6 +336,8 @@ Environment:
         WdfDriverMiniportUnload(WdfGetDriver());
     }
 
+    // Leyline: every miniport is gone by now; free the cables' ring buffers.
+    LeylineCablesCleanup();
 
 Done:
     return;
@@ -536,6 +539,15 @@ Return Value:
         ntStatus,
         DPF(D_ERROR, ("Registry Configuration error 0x%x", ntStatus)),
         Done);
+
+    //
+    // Leyline: allocate the cables' ring buffers.
+    //
+    ntStatus = LeylineCablesInitialize();
+    IF_FAILED_ACTION_JUMP(
+        ntStatus,
+        DPF(D_ERROR, ("Leyline cable buffers allocation error 0x%x", ntStatus)),
+        Done);
     
     WDF_DRIVER_CONFIG_INIT(&config, WDF_NO_EVENT_CALLBACK);
     //
@@ -594,6 +606,7 @@ Done:
             WdfDriverMiniportUnload(WdfGetDriver());
         }
 
+        LeylineCablesCleanup();
         ReleaseRegistryStringBuffer();
     }
     
@@ -844,11 +857,13 @@ InstallAllRenderFilters(
     )
 {
     NTSTATUS            ntStatus;
-    PENDPOINT_MINIPAIR* ppAeMiniports   = g_RenderEndpoints;
+    PENDPOINT_MINIPAIR* ppAeMiniports   = g_LeylineRenderEndpoints;
     
     PAGED_CODE();
 
-    for(ULONG i = 0; i < g_cRenderEndpoints; ++i, ++ppAeMiniports)
+    LeylineBuildEndpoints();
+
+    for(ULONG i = 0; i < LEYLINE_CABLE_COUNT; ++i, ++ppAeMiniports)
     {
         ntStatus = InstallEndpointRenderFilters(_pDeviceObject, _pIrp, _pAdapterCommon, *ppAeMiniports);
         IF_FAILED_JUMP(ntStatus, Exit);
@@ -895,11 +910,13 @@ InstallAllCaptureFilters(
     )
 {
     NTSTATUS            ntStatus;
-    PENDPOINT_MINIPAIR* ppAeMiniports     = g_CaptureEndpoints;
+    PENDPOINT_MINIPAIR* ppAeMiniports     = g_LeylineCaptureEndpoints;
     
     PAGED_CODE();
 
-    for(ULONG i = 0; i < g_cCaptureEndpoints; ++i, ++ppAeMiniports)
+    LeylineBuildEndpoints();
+
+    for(ULONG i = 0; i < LEYLINE_CABLE_COUNT; ++i, ++ppAeMiniports)
     {
         ntStatus = InstallEndpointCaptureFilters(_pDeviceObject, _pIrp, _pAdapterCommon, *ppAeMiniports);
         IF_FAILED_JUMP(ntStatus, Exit);
