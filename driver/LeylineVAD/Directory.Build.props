@@ -5,7 +5,7 @@
     driver changes (and only then).
   -->
   <PropertyGroup>
-    <LeylineDriverVersion>1.0.1.0</LeylineDriverVersion>
+    <LeylineDriverVersion>1.0.2.0</LeylineDriverVersion>
   </PropertyGroup>
 
 <Import Project="packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'"/>
