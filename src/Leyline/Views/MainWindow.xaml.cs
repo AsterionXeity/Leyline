@@ -143,6 +143,7 @@ public sealed partial class MainWindow : Window
         _vm.Hotkeys.TrayTogglePersonalMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsMonitorMasterMuted = !_vm.IsMonitorMasterMuted);
         _vm.Hotkeys.TrayToggleStreamMuteRequested += () => DispatcherQueue.TryEnqueue(() => _vm.IsStreamMasterMuted = !_vm.IsStreamMasterMuted);
         _vm.Hotkeys.TrayExitRequested += () => DispatcherQueue.TryEnqueue(ExitApplication);
+        NotificationService.OpenRequested += () => DispatcherQueue.TryEnqueue(RestoreFromTray);
 
         ModalAddAppCombo.ItemsSource = _vm.ActiveAppSessions;
         ModalVstPickerCombo.ItemsSource = _vm.DiscoveredVstPlugins;
@@ -171,6 +172,7 @@ public sealed partial class MainWindow : Window
     {
         _allowRealExit = true;
         ThemeService.ThemeChanged -= OnThemeChanged;
+        NotificationService.Shutdown();
         _vm.Dispose();
         Close();
         Application.Current.Exit();
@@ -182,10 +184,12 @@ public sealed partial class MainWindow : Window
         {
             args.Cancel = true;
             HideToTray();
+            NotificationService.ShowRunningInBackground();
             return;
         }
 
         ThemeService.ThemeChanged -= OnThemeChanged;
+        NotificationService.Shutdown();
         _vm.Dispose();
     }
 
@@ -655,12 +659,6 @@ public sealed partial class MainWindow : Window
     private void OpenDriverSettings_Click(object sender, RoutedEventArgs e)
     {
         SelectSettingsTab(1);
-        _vm.IsSettingsOpen = true;
-    }
-
-    private void OpenPluginsSettings_Click(object sender, RoutedEventArgs e)
-    {
-        SelectSettingsTab(2);
         _vm.IsSettingsOpen = true;
     }
 

@@ -198,13 +198,6 @@
 
                         <Border Height="1" Background="{ThemeResource BorderSubtleBrush}" Margin="12,6"/>
 
-                        <Button Style="{StaticResource NavItemBtn}" Click="OpenPluginsSettings_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <FontIcon Glyph="&#xEA86;" FontSize="13.5"/>
-                                <TextBlock Text="Marketplace" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-
                         <Button Style="{StaticResource NavItemBtn}" Click="OpenSettings_Click">
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <FontIcon Glyph="&#xE713;" FontSize="13.5"/>
@@ -796,15 +789,6 @@
                             </Grid>
                         </StackPanel>
                     </ScrollViewer>
-
-                    <!-- Floating Bottom-Right Quick Help / Theme Toggle Button (Matches Screenshot 2 & 5) -->
-                    <Button Grid.Row="1" Width="38" Height="32" Padding="0"
-                            HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,2,2"
-                            Background="{ThemeResource BgCardBrush}" BorderThickness="0" CornerRadius="6"
-                            Command="{Binding ToggleThemeCommand}"
-                            ToolTipService.ToolTip="{Binding ThemeButtonText}">
-                        <FontIcon Glyph="&#xE7BE;" FontSize="13.5" Foreground="{ThemeResource TextSecondaryBrush}"/>
-                    </Button>
                 </Grid>
 
                 <!-- ****************************************************************** -->
@@ -1714,6 +1698,8 @@
                                                   IsChecked="{Binding MinimizeToTrayOnClose, Mode=TwoWay}" Foreground="{ThemeResource TextPrimaryBrush}" FontSize="13"/>
                                         <CheckBox Content="Start Leyline automatically when Windows starts"
                                                   IsChecked="{Binding StartWithWindows, Mode=TwoWay}" Foreground="{ThemeResource TextPrimaryBrush}" FontSize="13"/>
+                                        <CheckBox Content="Show Windows notifications (startup, running in the background, plugin scan progress)"
+                                                  IsChecked="{Binding ShowNotifications, Mode=TwoWay}" Foreground="{ThemeResource TextPrimaryBrush}" FontSize="13"/>
                                     </StackPanel>
                                 </Border>
 

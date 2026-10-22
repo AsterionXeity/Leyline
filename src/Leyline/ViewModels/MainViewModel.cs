@@ -385,6 +385,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool ShowNotifications
+    {
+        get => Config.ShowNotifications;
+        set
+        {
+            Config.ShowNotifications = value;
+            OnPropertyChanged();
+            SaveConfig();
+        }
+    }
+
     public bool StartWithWindows
     {
         get => Config.StartWithWindows;
@@ -1364,7 +1375,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var allowed = Config.AllowedBlockedVstPaths.ToList();
             if (forceDeepProbe)
                 StatusBannerText = "Scanning plugins...";
-            all = await Task.Run(() => VstScanner.ScanPlugins(directories, allowed, forceDeepProbe));
+            all = await Task.Run(() => VstScanner.ScanPlugins(directories, allowed, forceDeepProbe, NotificationService.ReportScanProgress));
         }
         finally
         {
@@ -1392,6 +1403,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         RebuildUsableVstList();
+        NotificationService.CompleteScan(ScannedEffectPlugins.Count, VirtualInstrumentPlugins.Count, BrokenPlugins.Count);
         if (forceDeepProbe)
             StatusBannerText = $"Found {ScannedEffectPlugins.Count} effects and {VirtualInstrumentPlugins.Count} instruments.";
     }
@@ -1515,6 +1527,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ThemeButtonText));
         OnPropertyChanged(nameof(MinimizeToTrayOnClose));
         OnPropertyChanged(nameof(StartWithWindows));
+        OnPropertyChanged(nameof(ShowNotifications));
 
         Engine.MonitorMasterVolume = Config.MonitorMasterVolume;
         Engine.StreamMasterVolume = Config.StreamMasterVolume;

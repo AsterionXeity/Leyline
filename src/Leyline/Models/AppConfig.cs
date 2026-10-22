@@ -22,6 +22,7 @@ public sealed class AppConfig
 
     public bool MinimizeToTrayOnClose { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;
+    public bool ShowNotifications { get; set; } = true;
     public bool StartMinimized { get; set; } = false;
 
     public List<string> CustomVstDirectories { get; set; } = new();

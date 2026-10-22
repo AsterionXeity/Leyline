@@ -50,12 +50,14 @@ public static unsafe class VstScanner
     /// Finds VST2 and VST3 plugins and sorts them into effects, instruments and broken plugins.
     /// Only files that export a VST entry point are considered; each new or changed plugin is loaded in a
     /// separate probe process to read its category. <paramref name="forceDeepProbe"/> re-probes every plugin.
-    /// Slow on a first scan: call it off the UI thread.
+    /// Slow on a first scan: call it off the UI thread. <paramref name="onProbeProgress"/> receives (checked, total,
+    /// plugin name) from worker threads, starting at (0, total) when any plugin needs probing.
     /// </summary>
     public static List<VstPluginInfo> ScanPlugins(
         IEnumerable<string>? customDirectories = null,
         IEnumerable<string>? userAllowedPaths = null,
-        bool forceDeepProbe = false)
+        bool forceDeepProbe = false,
+        Action<int, int, string>? onProbeProgress = null)
     {
         var candidates = new List<VstPluginInfo>();
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -112,10 +114,18 @@ public static unsafe class VstScanner
             info.IsUserAllowedOverride = allowedSet.Contains(info.FilePath);
         }
 
+        if (toProbe.Count > 0)
+            onProbeProgress?.Invoke(0, toProbe.Count, string.Empty);
+
+        int probed = 0;
         Parallel.ForEach(
             toProbe,
             new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4) },
-            ProbePluginOutOfProcess);
+            info =>
+            {
+                ProbePluginOutOfProcess(info);
+                onProbeProgress?.Invoke(Interlocked.Increment(ref probed), toProbe.Count, info.Name);
+            });
 
         // Cache everything, including files that turned out not to be plugins, so they are not probed again.
         SaveCache(candidates);
@@ -385,7 +395,7 @@ public static unsafe class VstScanner
 
             if (!proc.WaitForExit(ProbeTimeoutMs))
             {
-                try { proc.Kill(); } catch { }
+                try { proc.Kill(entireProcessTree: true); } catch { }   // plugins can start helpers (Kontakt)
                 info.Status = VstPluginStatus.BrokenCrashed;
                 info.SubCategories = "Timed out during scan";
                 return;

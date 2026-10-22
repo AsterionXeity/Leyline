@@ -63,17 +63,17 @@ public partial class App : Application
             return;
         }
 
+        // Before the view model, whose startup plugin scan can report progress
+        NotificationService.Initialize();
+
         var vm = new MainViewModel();
+        NotificationService.IsEnabled = () => vm.Config.ShowNotifications;
         _mainWindow = new MainWindow(vm);
 
-        if (cliArgs.Contains("--minimized", StringComparer.OrdinalIgnoreCase))
-        {
-            _mainWindow.Activate();
+        bool minimized = cliArgs.Contains("--minimized", StringComparer.OrdinalIgnoreCase);
+        _mainWindow.Activate();
+        if (minimized)
             _mainWindow.HideToTray();
-        }
-        else
-        {
-            _mainWindow.Activate();
-        }
+        NotificationService.ShowStarted(inTray: minimized);
     }
 }
