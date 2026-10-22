@@ -73,6 +73,7 @@ public sealed partial class MainWindow : Window
         if (_appWindow != null)
         {
             _appWindow.Title = "Leyline";
+            _appWindow.SetIcon(IconGenerator.IconPath);
             _appWindow.Resize(new SizeInt32(_savedFullWidth, _savedFullHeight));
             _appWindow.Closing += AppWindow_Closing;
 

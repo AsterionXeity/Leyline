@@ -106,13 +106,8 @@
 
                 <Border Width="18" Height="18" CornerRadius="4" VerticalAlignment="Center" Margin="2,0,4,0">
                     <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#00E676" Offset="0"/>
-                            <GradientStop Color="#00B0FF" Offset="1"/>
-                        </LinearGradientBrush>
+                        <ImageBrush ImageSource="ms-appx:///Assets/Leyline.png" Stretch="UniformToFill"/>
                     </Border.Background>
-                    <TextBlock Text="〰" FontSize="10" FontWeight="Bold" Foreground="#0B0C10"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
                 </Border>
 
                 <TextBlock Text="Leyline" FontSize="12" FontWeight="Medium"

@@ -1,4 +1,3 @@
-using System.IO;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 
@@ -34,11 +33,7 @@ public static class NotificationService
             // Subscribe before Register so clicks that launched the app are not missed
             AppNotificationManager.Default.NotificationInvoked += (_, _) => OpenRequested?.Invoke();
 
-            string icon = IconGenerator.EnsureIconFileOnDisk(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Leyline",
-                "notification-icon.ico"));
-            AppNotificationManager.Default.Register("Leyline", new Uri(icon));
+            AppNotificationManager.Default.Register("Leyline", new Uri(IconGenerator.PngPath));
             _registered = true;
         }
         catch

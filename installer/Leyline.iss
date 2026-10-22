@@ -39,6 +39,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\Leyline.exe
+SetupIconFile=..\src\Leyline\Assets\Leyline.ico
 CloseApplications=force
 RestartApplications=no
 
