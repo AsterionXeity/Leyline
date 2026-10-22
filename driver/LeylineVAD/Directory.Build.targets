@@ -9,4 +9,12 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
   </ItemDefinitionGroup>
+
+  <!-- Stamp the INF with the fixed driver version (Directory.Build.props) instead of a build-time version. -->
+  <ItemDefinitionGroup>
+    <Inf>
+      <SpecifyDriverVerDirectiveVersion>true</SpecifyDriverVerDirectiveVersion>
+      <TimeStamp>$(LeylineDriverVersion)</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
 </Project>

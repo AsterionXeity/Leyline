@@ -2066,7 +2066,7 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <TextBlock Text="Before opening the main Leyline mixer screen, would you like to install or verify the standalone Leyline Virtual Audio Driver? This creates Leyline's own dedicated WDM/WaveRT virtual audio endpoints so you can route applications and output mixes independently."
+                    <TextBlock Text="Leyline routes audio through its own virtual audio driver: one virtual cable per channel (System, Game, Browser, Music, Voice Chat) plus Stream Mix for OBS and Microphone for Discord. Install it now, or update it when a new version of Leyline includes a newer driver."
                                FontSize="13" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" LineHeight="20"/>
 
                     <!-- Live Driver Status Card -->
@@ -2076,7 +2076,7 @@
                             <TextBlock Text="CURRENT DRIVER STATUS" FontSize="10.5" FontWeight="Bold" Foreground="{ThemeResource AccentPrimaryBrush}"/>
                             <TextBlock Text="{Binding DriverStatusText}" FontSize="13" FontWeight="SemiBold"
                                        Foreground="{ThemeResource TextPrimaryBrush}" TextWrapping="Wrap"/>
-                            <TextBlock Text="• Creates independent Leyline Virtual Audio endpoints (Elgato drivers are never touched)"
+                            <TextBlock Text="• Cables appear in Windows as e.g. System (Leyline Virtual Audio) and show as Disconnected until a channel uses them"
                                        FontSize="11.5" Foreground="{ThemeResource TextMutedBrush}"/>
                             <TextBlock Text="• Direct Per-App WASAPI Loopback Capture also works even if you skip driver installation"
                                        FontSize="11.5" Foreground="{ThemeResource TextMutedBrush}"/>
@@ -2089,7 +2089,7 @@
                                 Click="StartupInstallDriverAndContinue_Click">
                             <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
                                 <TextBlock Text="⚡" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="Install Leyline Virtual Audio Driver (UAC) &amp; Open Mixer" FontSize="13.5" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding DriverActionText}" FontSize="13.5" FontWeight="Bold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
 

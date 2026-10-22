@@ -871,7 +871,9 @@ LeylineTopoPropertyHandler
     return ntStatus;
 }
 
-#pragma code_seg("PAGE")
+// Not pageable: port class calls event handlers at raised IRQL (e.g. PCEVENT_VERB_REMOVE when a client
+// closes the filter). Only PCEVENT_VERB_ADD, which runs at PASSIVE_LEVEL, calls into paged code.
+#pragma code_seg()
 NTSTATUS
 LeylineTopoEventHandler
 (
@@ -879,8 +881,6 @@ LeylineTopoEventHandler
     _In_        CMiniportTopologySYSVAD    *Miniport
 )
 {
-    PAGED_CODE();
-
     ASSERT(EventRequest);
     ASSERT(Miniport);
 
@@ -894,6 +894,8 @@ LeylineTopoEventHandler
             {
                 return STATUS_UNSUCCESSFUL;
             }
+            // AddEventToEventList is pageable; ADD only arrives at PASSIVE_LEVEL.
+            NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
             Miniport->AddEventToEventList(EventRequest->EventEntry);
             break;
 

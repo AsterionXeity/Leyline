@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using Leyline.Models;
+using Leyline.Services;
 
 namespace Leyline.Audio;
 
@@ -91,12 +92,16 @@ public sealed class ChannelStripProcessor : IDisposable
                 return;
             }
 
-            // Primary path: Route assigned apps to this channel's Leyline Virtual Audio playback device
-            // and capture from that virtual playback endpoint (no double-audio on default speakers).
             if (!string.IsNullOrWhiteSpace(Model.DeviceId))
             {
                 RouteAssignedAppsToVirtualDevice(Model.DeviceId);
-                StartVirtualBusLoopbackCapture();
+
+                // Leyline cable: apps play into the cable's playback side; record its recording side.
+                // Other virtual devices: loopback-capture the playback endpoint.
+                if (!string.IsNullOrWhiteSpace(Model.CableId))
+                    StartCableCapture();
+                else
+                    StartVirtualBusLoopbackCapture();
             }
 
             // Fallback path: If no virtual playback device is assigned/active on this channel, use per-process loopback capture
@@ -144,6 +149,34 @@ public sealed class ChannelStripProcessor : IDisposable
         _captureDevice = cap;
         cap.StartRecording();
         Model.StatusText = "Live Input";
+    }
+
+    private void StartCableCapture()
+    {
+        // A cable that a mix is playing into (Stream Mix / Microphone) would feed that mix back into itself.
+        if (_isMixOutputDevice(Model.DeviceId))
+        {
+            Model.StatusText = "Skipped (Mix Output Cable)";
+            return;
+        }
+
+        string? captureId = LeylineCableService.FindEndpointId(Model.CableId, DataFlow.Capture);
+        if (captureId == null)
+        {
+            Model.StatusText = "Cable not connected";
+            return;
+        }
+
+        using var enumerator = new MMDeviceEnumerator();
+        var device = enumerator.GetDevice(captureId);
+        Model.DeviceName = $"{LeylineCableService.Find(Model.CableId)?.DisplayName ?? Model.CableId} ({LeylineDriverService.DeviceName})";
+
+        var capture = new WasapiCapture(device, true, 20);
+        capture.DataAvailable += OnCaptureDataAvailable;
+        capture.RecordingStopped += OnCaptureStopped;
+        _captureDevice = capture;
+        capture.StartRecording();
+        Model.StatusText = "Routing Active";
     }
 
     private void StartVirtualBusLoopbackCapture()

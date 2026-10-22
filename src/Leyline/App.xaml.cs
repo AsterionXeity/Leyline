@@ -32,21 +32,21 @@ public partial class App : Application
             return;
         }
 
-        // 2. Handle elevated CLI driver provisioning commands
-        if (cliArgs.Contains("--provision-driver", StringComparer.OrdinalIgnoreCase))
+        // 2. Elevated driver install / removal (Leyline re-launches itself with these; see LeylineDriverService)
+        if (cliArgs.Contains("--install-driver", StringComparer.OrdinalIgnoreCase))
         {
-            LeylineDriverService.Log("--provision-driver: started");
-            bool ok = LeylineDriverService.ProvisionLeylineEndpointsElevated(out string provisionMessage);
-            LeylineDriverService.Log($"--provision-driver: {(ok ? "ok" : "FAILED")} - {provisionMessage}");
+            LeylineDriverService.Log("--install-driver: started");
+            bool ok = LeylineDriverService.InstallElevated(out string installMessage);
+            LeylineDriverService.Log($"--install-driver: {(ok ? "ok" : "FAILED")} - {installMessage}");
             Environment.Exit(ok ? 0 : 1);
             return;
         }
 
-        if (cliArgs.Contains("--restore-driver", StringComparer.OrdinalIgnoreCase))
+        if (cliArgs.Contains("--uninstall-driver", StringComparer.OrdinalIgnoreCase))
         {
-            LeylineDriverService.Log("--restore-driver: started");
-            bool ok = LeylineDriverService.RestoreOriginalEndpointsElevated(out string restoreMessage);
-            LeylineDriverService.Log($"--restore-driver: {(ok ? "ok" : "FAILED")} - {restoreMessage}");
+            LeylineDriverService.Log("--uninstall-driver: started");
+            bool ok = LeylineDriverService.UninstallElevated(out string uninstallMessage);
+            LeylineDriverService.Log($"--uninstall-driver: {(ok ? "ok" : "FAILED")} - {uninstallMessage}");
             Environment.Exit(ok ? 0 : 1);
             return;
         }

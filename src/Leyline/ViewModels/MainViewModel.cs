@@ -25,6 +25,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _statusBannerText = "Leyline Audio Engine Active • 48kHz / 32-bit Float";
     private bool _isRecordingStream;
     private bool _isDriverBranded;
+    private bool _driverNeedsAttention;
+    private string _driverActionText = "Install Leyline Virtual Audio Driver (UAC)";
     private string _driverStatusText = "Checking Leyline Virtual Audio Driver...";
     private int _selectedTabIndex;
     private int _listeningMixIndex;
@@ -359,6 +361,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _driverStatusText, value);
     }
 
+    /// <summary>True when the driver is missing, outdated or not running: the startup prompt is shown.</summary>
+    public bool DriverNeedsAttention
+    {
+        get => _driverNeedsAttention;
+        set => SetProperty(ref _driverNeedsAttention, value);
+    }
+
+    public string DriverActionText
+    {
+        get => _driverActionText;
+        set => SetProperty(ref _driverActionText, value);
+    }
+
     public bool MinimizeToTrayOnClose
     {
         get => Config.MinimizeToTrayOnClose;
@@ -510,6 +525,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(ch.Id);
                 Channels.Remove(ch);
                 Config.Channels.Remove(ch);
+                ReleaseCableIfUnused(ch);
                 if (SelectedConfigChannel == ch)
                     IsChannelConfigModalOpen = false;
                 SaveConfig();
@@ -527,6 +543,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(ch.Id);
                 Channels.Remove(ch);
                 Config.Channels.Remove(ch);
+                ReleaseCableIfUnused(ch);
                 SaveConfig();
                 StatusBannerText = $"Removed channel '{ch.Name}'.";
             }
@@ -753,7 +770,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         });
 
         RefreshAudioDevices();
+        ConnectMixOutputCables();
         InitializeChannelsAndPads();
+        SaveConfig();   // record the channels' cable bindings
         RefreshDriverStatus();
         RefreshActiveAppSessions();
         ScanVstPlugins(forceDeepProbe: false);
@@ -908,7 +927,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Channels.Clear();
         foreach (var ch in Config.Channels)
         {
-            EnsureChannelBoundToVirtualPlaybackDevice(ch);
+            EnsureChannelBoundToCable(ch);
             ch.NotifyAppsChanged();
             ch.NotifyFxChanged();
             Channels.Add(ch);
@@ -935,57 +954,79 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void EnsureChannelBoundToVirtualPlaybackDevice(ChannelStripModel channel)
+    /// <summary>
+    /// Binds a channel to its Leyline cable: connects the cable and points DeviceId at the cable's playback
+    /// endpoint, where the channel's apps are routed. Channels without a cable (or without the driver) fall back
+    /// to per-app capture.
+    /// </summary>
+    private void EnsureChannelBoundToCable(ChannelStripModel channel)
     {
         if (channel.IsHardwareInput || channel.SourceType == ChannelSourceType.SoundboardChannel)
             return;
 
-        if (!string.IsNullOrWhiteSpace(channel.DeviceId) &&
-            RenderDevices.Any(d => d.Id == channel.DeviceId))
+        // Channels from older configs (and app channels) get a cable from their name.
+        if (string.IsNullOrWhiteSpace(channel.CableId))
+            channel.CableId = GuessCableForChannel(channel.Name) ?? string.Empty;
+
+        var cable = LeylineCableService.Find(channel.CableId);
+        if (cable == null || cable.IsMixOutput)
         {
+            channel.CableId = string.Empty;
+            // Drop a device left over from Leyline's former virtual devices.
+            if (!string.IsNullOrWhiteSpace(channel.DeviceId) && !RenderDevices.Any(d => d.Id == channel.DeviceId))
+            {
+                channel.DeviceId = string.Empty;
+                channel.DeviceName = "None (Direct App Capture)";
+            }
             return;
         }
 
-        var matched = ResolveVirtualPlaybackDeviceForChannel(channel);
-        if (matched != null)
+        var (renderId, _) = LeylineCableService.ConnectAndResolve(cable.Id);
+        if (renderId != null)
         {
-            channel.DeviceId = matched.Id;
-            channel.DeviceName = matched.Name;
+            channel.DeviceId = renderId;
+            channel.DeviceName = $"{cable.DisplayName} ({LeylineDriverService.DeviceName})";
+        }
+        else
+        {
+            channel.DeviceId = string.Empty;
+            channel.DeviceName = "Leyline driver not running (Direct App Capture)";
         }
     }
 
-    private AudioDeviceInfo? ResolveVirtualPlaybackDeviceForChannel(ChannelStripModel channel)
+    private static string? GuessCableForChannel(string name)
     {
-        var vpDevices = RenderDevices
-            .Where(d => LeylineDriverService.IsLeylineEndpoint(d.Name))
-            .ToList();
+        bool Has(string word) => name.Contains(word, StringComparison.OrdinalIgnoreCase);
 
-        if (vpDevices.Count == 0)
-            return null;
+        if (Has("System")) return "System";
+        if (Has("Game")) return "Game";
+        if (Has("Browser") || Has("Chrome") || Has("Firefox") || Has("Edge")) return "Browser";
+        if (Has("Music") || Has("Spotify")) return "Music";
+        if (Has("Voice") || Has("Discord")) return "VoiceChat";
+        return null;
+    }
 
-        string name = channel.Name;
-        string keyword = name switch
-        {
-            _ when name.Contains("System", StringComparison.OrdinalIgnoreCase) => "System",
-            _ when name.Contains("Game", StringComparison.OrdinalIgnoreCase) => "Game",
-            _ when name.Contains("Browser", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Firefox", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Edge", StringComparison.OrdinalIgnoreCase) => "Browser",
-            _ when name.Contains("Music", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Spotify", StringComparison.OrdinalIgnoreCase) => "Music",
-            _ when name.Contains("Voice", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Discord", StringComparison.OrdinalIgnoreCase) => "Voice Chat",
-            _ when name.Contains("OBS", StringComparison.OrdinalIgnoreCase) ||
-                   name.Contains("Stream", StringComparison.OrdinalIgnoreCase) => "Stream Mix",
-            _ when name.Contains("Mic", StringComparison.OrdinalIgnoreCase) => "Mic FX",
-            _ => "Game"
-        };
+    /// <summary>Disconnects a removed channel's cable when no other channel uses it.</summary>
+    private void ReleaseCableIfUnused(ChannelStripModel removed)
+    {
+        if (string.IsNullOrWhiteSpace(removed.CableId))
+            return;
 
-        var directMatch = vpDevices.FirstOrDefault(d =>
-            d.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        if (!Channels.Any(c => c != removed && c.CableId.Equals(removed.CableId, StringComparison.OrdinalIgnoreCase)))
+            LeylineCableService.SetConnected(removed.CableId, false);
+    }
 
-        return directMatch ?? vpDevices.FirstOrDefault();
+    /// <summary>
+    /// Connects the mix output cables: the Stream Mix plays into "Stream Mix" (for OBS) unless another Stream
+    /// output is chosen, and the Mic Rec mix plays into "Microphone" (for Discord and other voice apps).
+    /// </summary>
+    private void ConnectMixOutputCables()
+    {
+        var (streamRender, _) = LeylineCableService.ConnectAndResolve(LeylineCableService.StreamMixCableId);
+        Engine.SetStreamMixCableDevice(streamRender);
+
+        var (micRender, _) = LeylineCableService.ConnectAndResolve(LeylineCableService.MicrophoneCableId);
+        Engine.SetMicRecOutputDevice(micRender);
     }
 
     public void ChangeChannelDevice(ChannelStripModel channel, string? newDeviceId)
@@ -1031,7 +1072,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (channel.AssignedApps.Any(a => a.ProcessName.Equals(cleanProc, StringComparison.OrdinalIgnoreCase)))
             return;
 
-        EnsureChannelBoundToVirtualPlaybackDevice(channel);
+        EnsureChannelBoundToCable(channel);
 
         var item = new AssignedAppModel
         {
@@ -1100,7 +1141,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void AddChannel(ChannelStripModel model)
     {
-        EnsureChannelBoundToVirtualPlaybackDevice(model);
+        EnsureChannelBoundToCable(model);
         Config.Channels.Add(model);
         Channels.Add(model);
         Engine.AddOrRestartChannel(model);
@@ -1124,7 +1165,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (existing != null)
         {
             existing.TargetProcessId = app.ProcessId;
-            EnsureChannelBoundToVirtualPlaybackDevice(existing);
+            EnsureChannelBoundToCable(existing);
             if (!string.IsNullOrWhiteSpace(existing.DeviceId))
                 PolicyConfigClient.SetApplicationOutputEndpoint(app.ProcessId, existing.DeviceId);
             Engine.AddOrRestartChannel(existing);
@@ -1145,7 +1186,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             PersonalMix = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
             StreamMix = new MixSendState { IsEnabled = true, Volume = 0.90f, IsMuted = false }
         };
-        EnsureChannelBoundToVirtualPlaybackDevice(strip);
+        EnsureChannelBoundToCable(strip);
         if (string.IsNullOrWhiteSpace(strip.DeviceId))
         {
             // Fallback: only mute PersonalMix if no Leyline Virtual Audio playback device is installed
@@ -1347,50 +1388,78 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void RefreshDriverStatus()
     {
-        IsDriverBranded = LeylineDriverService.IsDriverBranded();
-        int vpCount = AllDevices.Count(d => LeylineDriverService.IsLeylineEndpoint(d.Name));
-        DriverStatusText = IsDriverBranded
-            ? $"Leyline Virtual Audio Driver Active ({vpCount} Leyline endpoints online)"
-            : "Leyline Virtual Audio Driver Not Installed • Click 'Install Leyline Audio Driver (UAC)' to create standalone Leyline endpoints";
+        var state = LeylineDriverService.GetState();
+        bool running = state != LeylineDriverState.NotInstalled && LeylineCableService.IsDriverRunning();
+        bool testSigning = LeylineDriverService.IsTestSigningEnabled();
+        Version? installed = LeylineDriverService.InstalledDriverVersion;
+        Version? bundled = LeylineDriverService.BundledDriverVersion;
+
+        IsDriverBranded = running;
+        DriverNeedsAttention = state is LeylineDriverState.NotInstalled or LeylineDriverState.UpdateAvailable ||
+                               (state == LeylineDriverState.Installed && !running);
+
+        DriverActionText = state == LeylineDriverState.UpdateAvailable
+            ? $"Update Leyline Virtual Audio Driver to {bundled} (UAC)"
+            : "Install Leyline Virtual Audio Driver (UAC)";
+
+        DriverStatusText = state switch
+        {
+            LeylineDriverState.NotBundled =>
+                "No driver package next to Leyline.exe • Build it with driver\\LeylineVAD\\Build-Driver.ps1 and Package-Driver.ps1",
+            LeylineDriverState.NotInstalled when !testSigning =>
+                "Not installed • Windows test signing is off: run 'bcdedit /set testsigning on' as administrator and reboot first",
+            LeylineDriverState.NotInstalled =>
+                "Not installed • Install it to create Leyline's virtual audio cables",
+            LeylineDriverState.UpdateAvailable =>
+                $"Update available: driver {installed} installed, {bundled} included with this version of Leyline",
+            _ when !running && !testSigning =>
+                $"Driver {installed} installed but not running • Windows test signing is off: run 'bcdedit /set testsigning on' as administrator and reboot",
+            _ when !running =>
+                $"Driver {installed} installed but not running • Try reinstalling it",
+            _ =>
+                $"Leyline Virtual Audio {installed} active • {LeylineCableService.Cables.Count(c => LeylineCableService.IsConnected(c.Id) == true)} of {LeylineCableService.Cables.Count} cables connected"
+        };
     }
 
     private void ExecuteDriverAction(bool install)
     {
+        if (install && !LeylineDriverService.IsTestSigningEnabled())
+        {
+            StatusBannerText = "Leyline's driver is test-signed: run 'bcdedit /set testsigning on' as administrator, reboot, then install it.";
+            RefreshDriverStatus();
+            return;
+        }
+
         StatusBannerText = install
-            ? "Installing Leyline Virtual Audio Driver (accept UAC prompt)..."
-            : "Removing Leyline Virtual Audio Driver instances (accept UAC prompt)...";
+            ? "Installing Leyline Virtual Audio Driver (accept the administrator prompt)..."
+            : "Removing Leyline Virtual Audio Driver (accept the administrator prompt)...";
 
         if (LeylineDriverService.RunElevatedDriverAction(install, out string msg))
         {
             RefreshAudioDevices();
             if (install)
             {
-                AutoBindChannelsToLeylineDriver();
+                ConnectMixOutputCables();
+                BindAllChannelsToCables();
             }
-            RefreshDriverStatus();
+            RefreshAudioDevices();
             SaveConfig();
         }
 
+        RefreshDriverStatus();
         StatusBannerText = msg;
     }
 
-    public void AutoBindChannelsToLeylineDriver()
+    /// <summary>Re-binds every channel to its cable (after the driver was installed or updated).</summary>
+    public void BindAllChannelsToCables()
     {
         foreach (var ch in Channels)
         {
             if (ch.IsHardwareInput || ch.SourceType == ChannelSourceType.SoundboardChannel)
                 continue;
 
-            var vpDevice = RenderDevices.FirstOrDefault(d =>
-                LeylineDriverService.IsLeylineEndpoint(d.Name) &&
-                d.Name.Contains(ch.Name, StringComparison.OrdinalIgnoreCase));
-
-            if (vpDevice != null)
-            {
-                ch.DeviceId = vpDevice.Id;
-                ch.DeviceName = vpDevice.Name;
-                Engine.AddOrRestartChannel(ch);
-            }
+            EnsureChannelBoundToCable(ch);
+            Engine.AddOrRestartChannel(ch);
         }
     }
 

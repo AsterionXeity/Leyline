@@ -55,6 +55,14 @@ public sealed partial class MainWindow : Window
         _vm = vm;
         RootGrid.DataContext = _vm;
 
+        // Driver setup prompt: only on first run, after an update that ships a newer driver, or when the
+        // driver is not running.
+        if (!_vm.DriverNeedsAttention)
+        {
+            StartupDriverPromptOverlay.Visibility = Visibility.Collapsed;
+            FullModeRootGrid.Visibility = Visibility.Visible;
+        }
+
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(CustomTitleBarDragRegion);
 

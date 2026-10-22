@@ -305,6 +305,7 @@ public sealed class ChannelStripModel : ObservableObject
     private string _accentHex = "#29B6F6";
     private ChannelSourceType _sourceType = ChannelSourceType.AppGroupChannel;
     private string _deviceId = string.Empty;
+    private string _cableId = string.Empty;
     private string _deviceName = "None (Unselected)";
     private uint _targetProcessId;
     private string _targetProcessName = string.Empty;
@@ -417,6 +418,16 @@ public sealed class ChannelStripModel : ObservableObject
     {
         get => _deviceId;
         set => SetProperty(ref _deviceId, value);
+    }
+
+    /// <summary>
+    /// Leyline cable this channel uses (LeylineCableService.Cables), empty for none. Apps are routed to the cable's
+    /// playback endpoint (DeviceId) and the channel records the cable's recording endpoint.
+    /// </summary>
+    public string CableId
+    {
+        get => _cableId;
+        set => SetProperty(ref _cableId, value);
     }
 
     public string DeviceName

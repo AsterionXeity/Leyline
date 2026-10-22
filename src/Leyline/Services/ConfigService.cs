@@ -175,17 +175,11 @@ public static class ConfigService
             case "obs":
             case "obs/stream":
             case "stream mix":
-                AddAppGroupRow(tempConfig, devList, "OBS/Stream", "📺", "#37474F", "Stream Mix",
+                AddAppGroupRow(tempConfig, devList, "OBS/Stream", "📺", "#37474F", "",
                     personal: true, stream: true, discord: false, micRec: false,
                     [
                         new AssignedAppModel { AppName = "OBS Studio", ProcessName = "obs64", IconEmoji = "📺" }
                     ]);
-                return tempConfig.Channels[0];
-
-            case "mic fx":
-                AddAppGroupRow(tempConfig, devList, "Mic FX", "🎙️", "#26A69A", "Mic FX",
-                    personal: false, stream: true, discord: true, micRec: true,
-                    []);
                 return tempConfig.Channels[0];
 
             case "game":
@@ -206,7 +200,7 @@ public static class ConfigService
 
             case "voice":
             case "voice chat":
-                AddAppGroupRow(tempConfig, devList, "Voice Chat", "💬", "#FBC02D", "Voice",
+                AddAppGroupRow(tempConfig, devList, "Voice Chat", "💬", "#FBC02D", "VoiceChat",
                     personal: true, stream: true, discord: true, micRec: false,
                     [
                         new AssignedAppModel { AppName = "Discord", ProcessName = "Discord", IconEmoji = "💬" }
@@ -258,7 +252,7 @@ public static class ConfigService
         string name,
         string icon,
         string accentHex,
-        string keyword,
+        string cableId,
         bool personal,
         bool stream,
         bool discord,
@@ -267,11 +261,8 @@ public static class ConfigService
         bool streamMuted = false,
         bool micRecMuted = false)
     {
-        // Only match Leyline's own virtual driver endpoints (never Elgato)
-        var vpVirt = devices.FirstOrDefault(d =>
-            d.Kind != AudioEndpointKind.CaptureInput &&
-            LeylineDriverService.IsLeylineEndpoint(d.Name) &&
-            d.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        // The channel's cable is connected and its endpoint resolved when the channel is added (MainViewModel).
+        var cable = LeylineCableService.Find(cableId);
 
         var strip = new ChannelStripModel
         {
@@ -279,8 +270,9 @@ public static class ConfigService
             Icon = icon,
             AccentHex = accentHex,
             SourceType = ChannelSourceType.AppGroupChannel,
-            DeviceId = vpVirt?.Id ?? string.Empty,
-            DeviceName = vpVirt?.Name ?? "None (Direct App Capture)",
+            CableId = cable?.Id ?? string.Empty,
+            DeviceId = string.Empty,
+            DeviceName = cable != null ? $"{cable.DisplayName} ({LeylineDriverService.DeviceName})" : "None (Direct App Capture)",
             InputVolume = 0.90f,
             PersonalMix = new MixSendState { IsEnabled = personal, Volume = 0.85f, IsMuted = false },
             StreamMix   = new MixSendState { IsEnabled = stream,   Volume = 0.80f, IsMuted = streamMuted },

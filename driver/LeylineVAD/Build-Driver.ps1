@@ -17,6 +17,8 @@ $NtTargetVersion = '0xA000008'
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.Windows.DriverKit -property installationPath
+# CI images may register the WDK without the DriverKit component; fall back to the newest Visual Studio.
+if (-not $vs) { $vs = & $vswhere -latest -products * -property installationPath }
 if (-not $vs) { throw 'No Visual Studio with the Windows Driver Kit component was found.' }
 
 Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"

@@ -26,9 +26,13 @@ public sealed class AudioEngine : IDisposable
 
     private WasapiOut? _monitorOut;
     private WasapiOut? _streamOut;
+    private WasapiOut? _micRecOut;
     private System.Threading.Timer? _soundboardPumpTimer;
     private string _currentMonitorDeviceId = string.Empty;
     private string _currentStreamDeviceId = string.Empty;
+    private string _requestedStreamDeviceId = string.Empty;  // user's Stream output choice ("" = none)
+    private string _streamCableDeviceId = string.Empty;      // Leyline "Stream Mix" cable: default Stream output
+    private string _currentMicRecDeviceId = string.Empty;    // Leyline "Microphone" cable
     private int _listeningMixIndex; // 0: Personal Mix, 1: Stream Mix, 2: Discord Record Mix, 3: Mic Rec Mix
 
     private WaveFileWriter? _streamRecorder;
@@ -237,16 +241,8 @@ public sealed class AudioEngine : IDisposable
                     return;
                 }
 
-                ISampleProvider activeMixProvider = _listeningMixIndex switch
-                {
-                    1 => _streamMasterProvider,
-                    2 => _discordMasterProvider,
-                    3 => _micRecMasterProvider,
-                    _ => _personalMasterProvider
-                };
-
                 _monitorOut = new WasapiOut(target, AudioClientShareMode.Shared, true, 25);
-                _monitorOut.Init(activeMixProvider);
+                _monitorOut.Init(GetMonitorSource(_listeningMixIndex));
                 _monitorOut.Play();
             }
             catch
@@ -256,14 +252,99 @@ public sealed class AudioEngine : IDisposable
         }
     }
 
+    /// <summary>
+    /// The user's Stream output choice. Empty ("None") sends the Stream Mix to Leyline's "Stream Mix" cable
+    /// (see SetStreamMixCableDevice) so OBS can record it without any setup.
+    /// </summary>
     public void SetStreamOutputDevice(string? deviceId)
     {
         lock (_engineLock)
         {
-            string previousId = _currentStreamDeviceId;
-            ApplyStreamOutputDevice(deviceId);
-            RestartChannelsOnDevices(previousId, _currentStreamDeviceId);
+            _requestedStreamDeviceId = deviceId ?? string.Empty;
+            ApplyEffectiveStreamOutput();
         }
+    }
+
+    /// <summary>Playback endpoint of Leyline's "Stream Mix" cable (empty when the driver is not running).</summary>
+    public void SetStreamMixCableDevice(string? deviceId)
+    {
+        lock (_engineLock)
+        {
+            _streamCableDeviceId = deviceId ?? string.Empty;
+            ApplyEffectiveStreamOutput();
+        }
+    }
+
+    private void ApplyEffectiveStreamOutput()
+    {
+        string effective = string.IsNullOrWhiteSpace(_requestedStreamDeviceId) ? _streamCableDeviceId : _requestedStreamDeviceId;
+        if (effective.Equals(_currentStreamDeviceId, StringComparison.OrdinalIgnoreCase) && (_streamOut != null || string.IsNullOrWhiteSpace(effective)))
+            return;
+
+        string previousId = _currentStreamDeviceId;
+        ApplyStreamOutputDevice(effective);
+        RestartChannelsOnDevices(previousId, _currentStreamDeviceId);
+        RefreshMonitorSourceIfListeningTo(1);
+    }
+
+    /// <summary>
+    /// Mic Rec mix output: Leyline's "Microphone" cable, which voice apps use as their microphone.
+    /// Empty stops the output.
+    /// </summary>
+    public void SetMicRecOutputDevice(string? deviceId)
+    {
+        lock (_engineLock)
+        {
+            string previousId = _currentMicRecDeviceId;
+            _micRecOut?.Stop();
+            _micRecOut?.Dispose();
+            _micRecOut = null;
+            _currentMicRecDeviceId = deviceId ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(deviceId))
+            {
+                try
+                {
+                    using var enumerator = new MMDeviceEnumerator();
+                    var target = enumerator.GetDevice(deviceId);
+                    if (target != null && target.State == DeviceState.Active && target.DataFlow == DataFlow.Render)
+                    {
+                        _micRecOut = new WasapiOut(target, AudioClientShareMode.Shared, true, 25);
+                        _micRecOut.Init(_micRecMasterProvider);
+                        _micRecOut.Play();
+                    }
+                }
+                catch
+                {
+                    _micRecOut = null;
+                }
+            }
+
+            RestartChannelsOnDevices(previousId, _currentMicRecDeviceId);
+            RefreshMonitorSourceIfListeningTo(3);
+        }
+    }
+
+    /// <summary>
+    /// What the monitor plays when listening to a mix. A mix that already has its own output (Stream Mix to its
+    /// cable or device, Mic Rec to the Microphone cable) is read by that output, so the monitor listens to a copy
+    /// (tap) instead; two readers on one mix would each get every other block.
+    /// </summary>
+    private ISampleProvider GetMonitorSource(int mixIndex)
+    {
+        return mixIndex switch
+        {
+            1 => _streamOut != null ? _streamMasterProvider.GetMonitorTap() : _streamMasterProvider,
+            2 => _discordMasterProvider,
+            3 => _micRecOut != null ? _micRecMasterProvider.GetMonitorTap() : _micRecMasterProvider,
+            _ => _personalMasterProvider
+        };
+    }
+
+    private void RefreshMonitorSourceIfListeningTo(int mixIndex)
+    {
+        if (_listeningMixIndex == mixIndex && !string.IsNullOrWhiteSpace(_currentMonitorDeviceId))
+            ApplyMonitorOutputDevice(_currentMonitorDeviceId);
     }
 
     private void ApplyStreamOutputDevice(string? deviceId)
@@ -312,7 +393,8 @@ public sealed class AudioEngine : IDisposable
             return false;
 
         return deviceId.Equals(_currentMonitorDeviceId, StringComparison.OrdinalIgnoreCase) ||
-               deviceId.Equals(_currentStreamDeviceId, StringComparison.OrdinalIgnoreCase);
+               deviceId.Equals(_currentStreamDeviceId, StringComparison.OrdinalIgnoreCase) ||
+               deviceId.Equals(_currentMicRecDeviceId, StringComparison.OrdinalIgnoreCase);
     }
 
     // Restart channels bound to a device whose mix-output status changed, so the loopback guard re-evaluates.
@@ -433,6 +515,8 @@ public sealed class AudioEngine : IDisposable
             _monitorOut?.Dispose();
             _streamOut?.Stop();
             _streamOut?.Dispose();
+            _micRecOut?.Stop();
+            _micRecOut?.Dispose();
 
             foreach (var ch in _channels)
                 ch.Dispose();
@@ -457,6 +541,8 @@ public sealed class AudioEngine : IDisposable
         private readonly Func<DspChainModel> _dspModelGetter;
         private readonly Func<float> _masterVolumeGetter;
         private readonly Action<float[], int, int>? _tapCallback;
+        private BufferedWaveProvider? _monitorTap;
+        private byte[] _tapBytes = [];
 
         public float SmoothedPeakLeft { get; private set; }
         public float SmoothedPeakRight { get; private set; }
@@ -503,7 +589,33 @@ public sealed class AudioEngine : IDisposable
             SmoothedPeakRight = Math.Max(pR, SmoothedPeakRight * 0.85f);
 
             _tapCallback?.Invoke(buffer, offset, read);
+
+            var tap = _monitorTap;
+            if (tap != null)
+            {
+                int bytes = read * sizeof(float);
+                if (_tapBytes.Length < bytes)
+                    _tapBytes = new byte[bytes];
+                Buffer.BlockCopy(buffer, offset * sizeof(float), _tapBytes, 0, bytes);
+                tap.AddSamples(_tapBytes, 0, bytes);
+            }
+
             return read;
+        }
+
+        /// <summary>
+        /// A copy of this mix for the monitor to listen to while another output reads the mix itself.
+        /// Created on first use; from then on every block this mix produces is copied into it.
+        /// </summary>
+        public ISampleProvider GetMonitorTap()
+        {
+            _monitorTap ??= new BufferedWaveProvider(Format)
+            {
+                BufferDuration = TimeSpan.FromMilliseconds(250),
+                DiscardOnBufferOverflow = true,
+                ReadFully = true
+            };
+            return _monitorTap.ToSampleProvider();
         }
 
         public void DecayMeters()

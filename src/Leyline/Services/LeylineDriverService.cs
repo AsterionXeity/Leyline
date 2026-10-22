@@ -1,76 +1,56 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.AccessControl;
+using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
 using System.Text;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
-using NAudio.CoreAudioApi;
 
 namespace Leyline.Services;
 
-public sealed class LeylineDriverNodeRecord
+public enum LeylineDriverState
 {
-    public string PnpInstanceId { get; set; } = string.Empty;
-    public string RenderBusName { get; set; } = string.Empty;
-    public string CaptureMixName { get; set; } = string.Empty;
+    /// <summary>No driver package ships next to Leyline.exe (local build without driver\LeylineVAD\out).</summary>
+    NotBundled,
+    /// <summary>The Leyline Virtual Audio device is not installed.</summary>
+    NotInstalled,
+    /// <summary>Installed, but older than the driver bundled with this version of Leyline.</summary>
+    UpdateAvailable,
+    /// <summary>Installed and up to date.</summary>
+    Installed
 }
 
-public sealed class EndpointBackupEntry
-{
-    public string DataFlow { get; set; } = string.Empty;
-    public string EndpointGuid { get; set; } = string.Empty;
-    public string OriginalDeviceDesc { get; set; } = string.Empty;
-    public string OriginalInterfaceName { get; set; } = string.Empty;
-}
-
+/// <summary>
+/// Installs, updates and removes the Leyline Virtual Audio driver (driver\LeylineVAD), which Leyline ships in a
+/// Driver\ folder next to Leyline.exe. Installing needs administrator rights, so Leyline re-launches itself
+/// elevated with --install-driver / --uninstall-driver and the helper does the work.
+/// </summary>
 public static class LeylineDriverService
 {
-    private const string PropKeyDeviceDesc = "{a45c254e-df1c-4efd-8020-67d146a850e0},2";
-    private const string PropKeyInterfaceFriendlyName = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6";
-    private const string PropKeyParentPnpId = "{b3f8fa53-0004-438e-9003-51a46e139bfc},2";
-    private const string PropKeyDeviceFriendlyName = "{a45c254e-df1c-4efd-8020-67d146a850e0},14";
+    public const string HardwareId = @"Root\LeylineVAD";
+    public const string DeviceName = "Leyline Virtual Audio";
 
-    private const string WdmHardwareId = @"ROOT\SteamStreamingMicrophone";
+    private const string InfName = "LeylineVAD.inf";
+    private const string CertName = "LeylineTestCert.cer";
+
+    // Devices Leyline created before it had its own driver: copies of Valve's Steam Streaming Microphone driver.
+    private const string LegacyValveHardwareId = @"ROOT\SteamStreamingMicrophone";
 
     private static Guid MediaClassGuid = new("4d36e96c-e325-11ce-bfc1-08002be10318");
 
-    // Windows shows an endpoint as "<endpoint DeviceDesc> (<device name>)" and numbers devices that share a name
-    // ("3- Leyline Virtual Audio"), so each device is named after its bus: "Speakers (Leyline Browser)".
-    private static readonly (string RenderBus, string CaptureMix)[] DesiredVirtualBuses =
-    [
-        ("System",     "System"),
-        ("Game",       "Game"),
-        ("Browser",    "Browser"),
-        ("Music",      "Music"),
-        ("Voice Chat", "Voice Chat"),
-        ("Stream Mix", "Stream Mix"),
-        ("Mic FX",     "Mic FX")
-    ];
+    private static string AppDataDir => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Leyline");
 
-    /// <summary>
-    /// True for endpoints created by Leyline's provisioner. Windows composes the endpoint name from the bus name and
-    /// either the interface name ("Leyline Virtual Audio") or the device-node name ("Leyline Browser"), so match the brand only.
-    /// </summary>
-    public static bool IsLeylineEndpoint(string? endpointName) =>
-        !string.IsNullOrEmpty(endpointName) &&
-        endpointName.Contains("Leyline", StringComparison.OrdinalIgnoreCase);
+    private static string LogFilePath => Path.Combine(AppDataDir, "driver.log");
 
-    private static string NodesFilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Leyline",
-        "leyline-driver-nodes.json");
+    // Records of the legacy Valve-based devices (used only to remove them).
+    private static string LegacyNodesFilePath => Path.Combine(AppDataDir, "leyline-driver-nodes.json");
 
-    private static string LegacyBackupFilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Leyline",
-        "driver-endpoint-backup.json");
+    /// <summary>Folder holding the bundled driver package (LeylineVAD.inf/.sys/.cat and the test certificate).</summary>
+    public static string PackageDirectory => Path.Combine(AppContext.BaseDirectory, "Driver");
 
-    private static string LogFilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Leyline",
-        "driver.log");
+    private static string BundledInfPath => Path.Combine(PackageDirectory, InfName);
 
     /// <summary>
     /// Appends a line to %APPDATA%\Leyline\driver.log. The elevated helper has no UI, so this is the only record of what it did.
@@ -79,7 +59,7 @@ public static class LeylineDriverService
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogFilePath)!);
+            Directory.CreateDirectory(AppDataDir);
             string elevation = IsRunningAsAdministrator() ? "admin" : "user";
             File.AppendAllText(LogFilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{Environment.ProcessId} {elevation}] {message}{Environment.NewLine}");
         }
@@ -91,8 +71,7 @@ public static class LeylineDriverService
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
-            var principal = new WindowsPrincipal(identity);
-            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
         catch
         {
@@ -100,13 +79,76 @@ public static class LeylineDriverService
         }
     }
 
-    public static bool IsDriverBranded()
+    //=========================================================================
+    // State
+    //=========================================================================
+
+    public static LeylineDriverState GetState()
+    {
+        Version? bundled = BundledDriverVersion;
+        Version? installed = InstalledDriverVersion;
+
+        if (installed == null)
+            return bundled == null ? LeylineDriverState.NotBundled : LeylineDriverState.NotInstalled;
+        if (bundled != null && bundled > installed)
+            return LeylineDriverState.UpdateAvailable;
+        return LeylineDriverState.Installed;
+    }
+
+    /// <summary>DriverVer version of the driver package shipped with this Leyline build.</summary>
+    public static Version? BundledDriverVersion
+    {
+        get
+        {
+            try
+            {
+                if (!File.Exists(BundledInfPath))
+                    return null;
+
+                // DriverVer = mm/dd/yyyy,a.b.c.d (stampinf may write UTF-16 or ASCII; File.ReadAllText detects the BOM)
+                var match = Regex.Match(File.ReadAllText(BundledInfPath), @"^\s*DriverVer\s*=\s*[^,]*,\s*([\d.]+)", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+                return match.Success && Version.TryParse(match.Groups[1].Value, out var v) ? v : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>Version of the installed Leyline driver, or null when the device is not installed.</summary>
+    public static Version? InstalledDriverVersion
+    {
+        get
+        {
+            foreach (string instanceId in FindDeviceInstances(HardwareId))
+            {
+                try
+                {
+                    using var enumKey = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{instanceId}");
+                    if (enumKey?.GetValue("Driver") is not string driverKey)
+                        continue;
+
+                    using var classKey = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Control\Class\{driverKey}");
+                    if (classKey?.GetValue("DriverVersion") is string ver && Version.TryParse(ver, out var v))
+                        return v;
+                }
+                catch { }
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Leyline's driver is test-signed, so Windows only loads it with test signing on (bcdedit /set testsigning on + reboot).
+    /// </summary>
+    public static bool IsTestSigningEnabled()
     {
         try
         {
-            using var enumerator = new MMDeviceEnumerator();
-            var devices = enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active);
-            return devices.Any(d => IsLeylineEndpoint(d.FriendlyName));
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control");
+            return (key?.GetValue("SystemStartOptions") as string ?? string.Empty)
+                .Contains("TESTSIGNING", StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
@@ -114,46 +156,70 @@ public static class LeylineDriverService
         }
     }
 
+    /// <summary>Device instance IDs (under ROOT\MEDIA) whose hardware ID list contains <paramref name="hardwareId"/>.</summary>
+    private static List<string> FindDeviceInstances(string hardwareId)
+    {
+        var result = new List<string>();
+        try
+        {
+            using var media = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\MEDIA");
+            if (media == null)
+                return result;
+
+            foreach (string sub in media.GetSubKeyNames())
+            {
+                using var dev = media.OpenSubKey(sub);
+                if (dev?.GetValue("HardwareID") is string[] ids &&
+                    ids.Any(id => id.Equals(hardwareId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    result.Add($@"ROOT\MEDIA\{sub}");
+                }
+            }
+        }
+        catch { }
+        return result;
+    }
+
+    //=========================================================================
+    // Elevated actions
+    //=========================================================================
+
+    /// <summary>Runs the install (or uninstall) in an elevated copy of Leyline and waits for it.</summary>
     public static bool RunElevatedDriverAction(bool install, out string statusMessage)
     {
+        string arg = install ? "--install-driver" : "--uninstall-driver";
         try
         {
-            string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
+            if (IsRunningAsAdministrator())
+            {
+                return install ? InstallElevated(out statusMessage) : UninstallElevated(out statusMessage);
+            }
+
+            string exePath = Environment.ProcessPath ?? string.Empty;
             if (string.IsNullOrWhiteSpace(exePath))
             {
-                statusMessage = "Could not resolve Leyline executable path.";
+                statusMessage = "Could not resolve the Leyline executable path.";
                 return false;
             }
 
-            string arg = install ? "--provision-driver" : "--restore-driver";
-
-            if (IsRunningAsAdministrator())
-            {
-                return install
-                    ? ProvisionLeylineEndpointsElevated(out statusMessage)
-                    : RestoreOriginalEndpointsElevated(out statusMessage);
-            }
-
-            var psi = new ProcessStartInfo
+            using var proc = Process.Start(new ProcessStartInfo
             {
                 FileName = exePath,
                 Arguments = arg,
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden
-            };
-
-            using var proc = Process.Start(psi);
+            });
             if (proc == null)
             {
-                statusMessage = "Administrator elevation was cancelled.";
+                statusMessage = "Administrator approval was cancelled.";
                 return false;
             }
 
-            if (!proc.WaitForExit(35000))
+            if (!proc.WaitForExit(120000))
             {
-                Log($"{arg}: elevated helper still running after 35 s");
-                statusMessage = "Driver action is taking longer than expected; check again in a moment.";
+                Log($"{arg}: elevated helper still running after 120 s");
+                statusMessage = "The driver installer is taking longer than expected; check again in a moment.";
                 return false;
             }
 
@@ -161,116 +227,82 @@ public static class LeylineDriverService
             if (proc.ExitCode == 0)
             {
                 statusMessage = install
-                    ? "Leyline Virtual Audio Driver installed! Dedicated Leyline Virtual Audio devices are now live."
-                    : "Leyline Virtual Audio Driver instances removed.";
+                    ? $"{DeviceName} driver installed."
+                    : $"{DeviceName} driver removed.";
                 return true;
             }
 
-            statusMessage = $"Driver installer exited with code {proc.ExitCode}.";
+            statusMessage = $"The driver {(install ? "install" : "removal")} failed (code {proc.ExitCode}); see %APPDATA%\\Leyline\\driver.log.";
             return false;
         }
         catch (Exception ex)
         {
-            Log($"Driver action failed to start: {ex.Message}");
+            Log($"{arg}: failed to start: {ex.Message}");
             statusMessage = $"Driver action cancelled or failed: {ex.Message}";
             return false;
         }
     }
 
     /// <summary>
-    /// Creates dedicated standalone PnP Virtual Audio Device instances for Leyline (separate from Elgato's driver)
-    /// and names them per bus: endpoints read "Speakers (Leyline Browser)" / "Microphone (Leyline Browser)".
+    /// Elevated: removes the legacy Valve-based devices, trusts the test certificate, installs the driver package
+    /// and creates (or updates) the Root\LeylineVAD device.
     /// </summary>
-    public static bool ProvisionLeylineEndpointsElevated(out string message)
+    public static bool InstallElevated(out string message)
     {
         if (!IsRunningAsAdministrator())
         {
-            message = "Administrator rights are required to change Leyline virtual audio devices.";
+            message = "Administrator rights are required to install the Leyline driver.";
             return false;
         }
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(NodesFilePath)!);
-
-            // Ensure any legacy backups on Elgato endpoints are restored first so Elgato is untouched
-            RestoreLegacyBackupsIfAny();
-
-            string infPath = ResolveSignedDriverInfPath();
-            if (string.IsNullOrWhiteSpace(infPath) || !File.Exists(infPath))
+            if (!File.Exists(BundledInfPath))
             {
-                message = "Signed WDM driver INF not found.";
+                message = $"Driver package not found in {PackageDirectory}.";
                 return false;
             }
 
-            var existingLiveNodes = LoadNodes()
-                .Where(n => DoesPnpNodeExist(n.PnpInstanceId))
-                .ToList();
+            RemoveLegacyDevices();
 
-            var updatedNodes = new List<LeylineDriverNodeRecord>();
-
-            // Reuse existing PnP virtual audio device nodes or create missing ones for the 7 Leyline buses
-            for (int i = 0; i < DesiredVirtualBuses.Length; i++)
+            string certPath = Path.Combine(PackageDirectory, CertName);
+            if (File.Exists(certPath))
             {
-                var (renderBus, captureMix) = DesiredVirtualBuses[i];
-                if (i < existingLiveNodes.Count)
+                using var cert = X509CertificateLoader.LoadCertificateFromFile(certPath);
+                foreach (var storeName in new[] { StoreName.Root, StoreName.TrustedPublisher })
                 {
-                    var node = existingLiveNodes[i];
-                    node.RenderBusName = renderBus;
-                    node.CaptureMixName = captureMix;
-                    updatedNodes.Add(node);
+                    using var store = new X509Store(storeName, StoreLocation.LocalMachine);
+                    store.Open(OpenFlags.ReadWrite);
+                    store.Add(cert);
                 }
-                else
+                Log($"Trusted test certificate {cert.Subject}");
+            }
+
+            // Add the package to the driver store and update any existing Leyline device to it.
+            int addCode = RunTool("pnputil.exe", $"/add-driver \"{BundledInfPath}\" /install");
+            Log($"pnputil /add-driver exited with {addCode}");
+
+            if (FindDeviceInstances(HardwareId).Count == 0)
+            {
+                string? instanceId = CreateRootDevice(DeviceName, HardwareId);
+                Log(instanceId != null ? $"Created device {instanceId}" : "Creating the device failed");
+                if (instanceId == null)
                 {
-                    string? createdId = CreatePnpVirtualAudioNode(DeviceName(renderBus));
-                    if (!string.IsNullOrWhiteSpace(createdId))
-                    {
-                        updatedNodes.Add(new LeylineDriverNodeRecord
-                        {
-                            PnpInstanceId = createdId,
-                            RenderBusName = renderBus,
-                            CaptureMixName = captureMix
-                        });
-                    }
+                    message = "Could not create the Leyline Virtual Audio device.";
+                    return false;
                 }
             }
 
-            var nodes = updatedNodes;
-            if (nodes.Count == 0)
-            {
-                message = "No Leyline virtual audio devices could be created.";
-                return false;
-            }
-
-            SaveNodes(nodes);
-
-            // Bind/install the signed WDM driver onto the newly registered PnP nodes
-            UpdateDriverForPlugAndPlayDevicesW(
-                IntPtr.Zero,
-                WdmHardwareId,
-                infPath,
+            bool updated = UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, HardwareId, BundledInfPath,
                 0x00000001u | 0x00000004u, // INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE
                 out _);
+            Log($"UpdateDriverForPlugAndPlayDevices: {(updated ? "ok" : $"failed (Win32 error {Marshal.GetLastWin32Error()})")}");
 
-            // Wait for AudioEndpointBuilder to create each node's render and capture endpoints; naming them earlier
-            // leaves reused endpoints with stale names.
-            WaitForEndpoints(nodes, TimeSpan.FromSeconds(15));
-
-            // Set friendly names in Device Manager & MMDevices\Audio\Render & Capture for ONLY Leyline's PnP nodes
-            int namedEndpoints = 0;
-            foreach (var node in nodes)
-            {
-                string deviceName = DeviceName(node.RenderBusName);
-                SetPnpNodeFriendlyName(node.PnpInstanceId, deviceName);
-                namedEndpoints += NameEndpointsForPnpNode("Render", node.PnpInstanceId, "Speakers", deviceName);
-                namedEndpoints += NameEndpointsForPnpNode("Capture", node.PnpInstanceId, "Microphone", deviceName);
-            }
-
-            RemoveLegacyVoidPatchEndpoints();
-            RestartWindowsAudioServiceSoft();
-
-            message = $"Created {nodes.Count} standalone Leyline Virtual Audio devices ({namedEndpoints} endpoints active).";
-            return true;
+            Version? installed = InstalledDriverVersion;
+            message = installed != null
+                ? $"{DeviceName} driver {installed} installed."
+                : "The driver package was added, but the device did not start.";
+            return installed != null;
         }
         catch (Exception ex)
         {
@@ -279,68 +311,137 @@ public static class LeylineDriverService
         }
     }
 
-    public static bool RestoreOriginalEndpointsElevated(out string message)
+    /// <summary>Elevated: removes the Leyline device and its driver package.</summary>
+    public static bool UninstallElevated(out string message)
     {
         if (!IsRunningAsAdministrator())
         {
-            message = "Administrator rights are required to change Leyline virtual audio devices.";
+            message = "Administrator rights are required to remove the Leyline driver.";
             return false;
         }
 
         try
         {
-            RestoreLegacyBackupsIfAny();
-
-            var nodes = LoadNodes();
             int removed = 0;
-            foreach (var node in nodes)
+            foreach (string instanceId in FindDeviceInstances(HardwareId))
             {
-                bool ok = RemovePnpVirtualAudioNode(node.PnpInstanceId);
-                Log($"Remove {node.PnpInstanceId}: {(ok ? "ok" : $"failed (Win32 error {Marshal.GetLastWin32Error()})")}");
-                if (ok)
+                if (RunTool("pnputil.exe", $"/remove-device \"{instanceId}\"") == 0)
                     removed++;
             }
 
-            if (File.Exists(NodesFilePath))
-                File.Delete(NodesFilePath);
+            foreach (string published in FindPublishedDriverPackages(InfName))
+            {
+                RunTool("pnputil.exe", $"/delete-driver {published} /uninstall /force");
+            }
 
-            RestartWindowsAudioServiceSoft();
-            message = $"Removed {removed} Leyline Virtual Audio device instances.";
+            RemoveLegacyDevices();
+
+            message = $"Removed {removed} Leyline Virtual Audio device(s).";
             return true;
         }
         catch (Exception ex)
         {
-            message = $"Driver removal failed: {ex.Message}";
+            message = $"Leyline driver removal failed: {ex.Message}";
             return false;
         }
     }
 
-    private static string ResolveSignedDriverInfPath()
+    /// <summary>
+    /// Removes devices from Leyline's former approach: copies of Valve's Steam Streaming Microphone driver renamed
+    /// "Leyline ..." / "VoidPatch ...", plus leftover endpoint entries named VoidPatch. Valve's own Steam devices
+    /// (ROOT\STEAMSTREAMINGMICROPHONE) are never touched.
+    /// </summary>
+    private static void RemoveLegacyDevices()
     {
-        string localSigned = @"G:\Leyline\driver\LeylineVAD\signed\SteamStreamingMicrophone.inf";
-        if (File.Exists(localSigned))
-            return localSigned;
+        foreach (string instanceId in FindDeviceInstances(LegacyValveHardwareId))
+        {
+            string friendlyName = string.Empty;
+            try
+            {
+                using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{instanceId}");
+                friendlyName = key?.GetValue("FriendlyName") as string ?? key?.GetValue("DeviceDesc") as string ?? string.Empty;
+            }
+            catch { }
 
-        string oemInf = @"C:\Windows\INF\oem112.inf";
-        if (File.Exists(oemInf))
-            return oemInf;
+            if (friendlyName.Contains("Leyline", StringComparison.OrdinalIgnoreCase) ||
+                friendlyName.Contains("VoidPatch", StringComparison.OrdinalIgnoreCase))
+            {
+                int code = RunTool("pnputil.exe", $"/remove-device \"{instanceId}\"");
+                Log($"Removed legacy device {instanceId} ({friendlyName}): exit {code}");
+            }
+        }
+
+        RunTool("powershell.exe",
+            "-NoProfile -WindowStyle Hidden -Command \"Get-PnpDevice -Class AudioEndpoint | " +
+            "Where-Object FriendlyName -like '*VoidPatch*' | ForEach-Object { pnputil /remove-device $_.InstanceId | Out-Null }\"");
 
         try
         {
-            var repoDirs = Directory.GetDirectories(@"C:\Windows\System32\DriverStore\FileRepository", "steamstreamingmicrophone.inf_amd64_*");
-            if (repoDirs.Length > 0)
-            {
-                string candidate = Path.Combine(repoDirs[0], "SteamStreamingMicrophone.inf");
-                if (File.Exists(candidate))
-                    return candidate;
-            }
+            if (File.Exists(LegacyNodesFilePath))
+                File.Delete(LegacyNodesFilePath);
         }
         catch { }
-
-        return localSigned;
     }
 
-    private static string? CreatePnpVirtualAudioNode(string friendlyDescription)
+    /// <summary>Published names (oemNN.inf) of driver-store packages whose original name is <paramref name="originalInfName"/>.</summary>
+    private static List<string> FindPublishedDriverPackages(string originalInfName)
+    {
+        var result = new List<string>();
+        string output = RunToolCapture("pnputil.exe", "/enum-drivers");
+        string? published = null;
+        foreach (string raw in output.Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.StartsWith("Published Name:", StringComparison.OrdinalIgnoreCase))
+                published = line["Published Name:".Length..].Trim();
+            else if (line.StartsWith("Original Name:", StringComparison.OrdinalIgnoreCase) &&
+                     line["Original Name:".Length..].Trim().Equals(originalInfName, StringComparison.OrdinalIgnoreCase) &&
+                     published != null)
+                result.Add(published);
+        }
+        return result;
+    }
+
+    private static int RunTool(string fileName, string arguments)
+    {
+        string output = RunToolCapture(fileName, arguments, out int exitCode);
+        if (!string.IsNullOrWhiteSpace(output))
+            Log($"{Path.GetFileNameWithoutExtension(fileName)} {arguments}: {output.Trim().Replace(Environment.NewLine, " | ")}");
+        return exitCode;
+    }
+
+    private static string RunToolCapture(string fileName, string arguments) => RunToolCapture(fileName, arguments, out _);
+
+    private static string RunToolCapture(string fileName, string arguments, out int exitCode)
+    {
+        exitCode = -1;
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+            if (p == null)
+                return string.Empty;
+            string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+            p.WaitForExit(60000);
+            exitCode = p.ExitCode;
+            return output;
+        }
+        catch (Exception ex)
+        {
+            Log($"{fileName} {arguments}: {ex.Message}");
+            return string.Empty;
+        }
+    }
+
+    /// <summary>Creates a root-enumerated device node with the given hardware ID; returns its instance ID.</summary>
+    private static string? CreateRootDevice(string description, string hardwareId)
     {
         IntPtr devInfoSet = SetupDiCreateDeviceInfoList(ref MediaClassGuid, IntPtr.Zero);
         if (devInfoSet == new IntPtr(-1))
@@ -349,253 +450,28 @@ public static class LeylineDriverService
         try
         {
             SP_DEVINFO_DATA devInfoData = new() { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
-            if (!SetupDiCreateDeviceInfoW(
-                devInfoSet,
-                "MEDIA",
-                ref MediaClassGuid,
-                friendlyDescription,
-                IntPtr.Zero,
-                1, // DICD_GENERATE_ID
-                ref devInfoData))
+            if (!SetupDiCreateDeviceInfoW(devInfoSet, "MEDIA", ref MediaClassGuid, description, IntPtr.Zero,
+                    1, // DICD_GENERATE_ID
+                    ref devInfoData))
             {
                 return null;
             }
 
             // REG_MULTI_SZ requires double null termination in UTF-16
-            byte[] hwidBytes = Encoding.Unicode.GetBytes(WdmHardwareId + "\0\0");
-            if (!SetupDiSetDeviceRegistryPropertyW(
-                devInfoSet,
-                ref devInfoData,
-                1, // SPDRP_HARDWAREID
-                hwidBytes,
-                (uint)hwidBytes.Length))
-            {
-                return null;
-            }
-
-            if (!SetupDiCallClassInstaller(0x19, devInfoSet, ref devInfoData)) // DIF_REGISTERDEVICE = 0x19
+            byte[] hwidBytes = Encoding.Unicode.GetBytes(hardwareId + "\0\0");
+            if (!SetupDiSetDeviceRegistryPropertyW(devInfoSet, ref devInfoData, 1 /* SPDRP_HARDWAREID */, hwidBytes, (uint)hwidBytes.Length))
                 return null;
 
-            StringBuilder sb = new(256);
-            if (SetupDiGetDeviceInstanceIdW(devInfoSet, ref devInfoData, sb, (uint)sb.Capacity, out _))
-            {
-                return sb.ToString();
-            }
+            if (!SetupDiCallClassInstaller(0x19 /* DIF_REGISTERDEVICE */, devInfoSet, ref devInfoData))
+                return null;
+
+            var sb = new StringBuilder(256);
+            return SetupDiGetDeviceInstanceIdW(devInfoSet, ref devInfoData, sb, (uint)sb.Capacity, out _) ? sb.ToString() : null;
         }
         finally
         {
             SetupDiDestroyDeviceInfoList(devInfoSet);
         }
-
-        return null;
-    }
-
-    private static bool RemovePnpVirtualAudioNode(string instanceId)
-    {
-        if (string.IsNullOrWhiteSpace(instanceId)) return false;
-
-        IntPtr devInfoSet = SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
-        if (devInfoSet == new IntPtr(-1))
-            return false;
-
-        try
-        {
-            SP_DEVINFO_DATA devInfoData = new() { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
-            if (SetupDiOpenDeviceInfoW(devInfoSet, instanceId, IntPtr.Zero, 0, ref devInfoData))
-            {
-                return SetupDiCallClassInstaller(0x05, devInfoSet, ref devInfoData); // DIF_REMOVE = 0x05
-            }
-        }
-        finally
-        {
-            SetupDiDestroyDeviceInfoList(devInfoSet);
-        }
-        return false;
-    }
-
-    private static bool DoesPnpNodeExist(string instanceId)
-    {
-        if (string.IsNullOrWhiteSpace(instanceId)) return false;
-        using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{instanceId}", false);
-        return key != null;
-    }
-
-    private static void WaitForEndpoints(List<LeylineDriverNodeRecord> nodes, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            bool allReady = nodes.All(n =>
-                CountEndpointsForPnpNode("Render", n.PnpInstanceId) > 0 &&
-                CountEndpointsForPnpNode("Capture", n.PnpInstanceId) > 0);
-            if (allReady)
-                return;
-            Thread.Sleep(500);
-        }
-        Log("Timed out waiting for endpoints; naming the ones that exist");
-    }
-
-    private static int CountEndpointsForPnpNode(string flowName, string pnpInstanceId)
-    {
-        string flowPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{flowName}";
-        using var flowKey = Registry.LocalMachine.OpenSubKey(flowPath, false);
-        if (flowKey == null) return 0;
-
-        int count = 0;
-        foreach (var endpointGuid in flowKey.GetSubKeyNames())
-        {
-            using var props = Registry.LocalMachine.OpenSubKey($@"{flowPath}\{endpointGuid}\Properties", false);
-            string parentId = props?.GetValue(PropKeyParentPnpId) as string ?? string.Empty;
-            if (parentId.Contains(pnpInstanceId, StringComparison.OrdinalIgnoreCase))
-                count++;
-        }
-        return count;
-    }
-
-    private static void SetPnpNodeFriendlyName(string instanceId, string friendlyName)
-    {
-        try
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(
-                $@"SYSTEM\CurrentControlSet\Enum\{instanceId}",
-                RegistryKeyPermissionCheck.ReadWriteSubTree,
-                RegistryRights.SetValue | RegistryRights.QueryValues);
-            key?.SetValue("FriendlyName", friendlyName, RegistryValueKind.String);
-        }
-        catch { }
-    }
-
-    private static string DeviceName(string busName) => $"Leyline {busName}";
-
-    private static int NameEndpointsForPnpNode(string flowName, string pnpInstanceId, string endpointName, string deviceName)
-    {
-        int updated = 0;
-        string flowPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{flowName}";
-        using var flowKey = Registry.LocalMachine.OpenSubKey(flowPath, false);
-        if (flowKey == null) return 0;
-
-        foreach (var endpointGuid in flowKey.GetSubKeyNames())
-        {
-            string propPath = $@"{flowPath}\{endpointGuid}\Properties";
-            using var readKey = Registry.LocalMachine.OpenSubKey(propPath, false);
-            if (readKey == null) continue;
-
-            string parentId = readKey.GetValue(PropKeyParentPnpId) as string ?? string.Empty;
-            if (!parentId.Contains(pnpInstanceId, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            using var writeKey = Registry.LocalMachine.OpenSubKey(
-                propPath,
-                RegistryKeyPermissionCheck.ReadWriteSubTree,
-                RegistryRights.SetValue | RegistryRights.QueryValues);
-
-            if (writeKey != null)
-            {
-                writeKey.SetValue(PropKeyDeviceDesc, endpointName, RegistryValueKind.String);
-                writeKey.SetValue(PropKeyInterfaceFriendlyName, deviceName, RegistryValueKind.String);
-                writeKey.DeleteValue(PropKeyDeviceFriendlyName, false);
-                updated++;
-            }
-        }
-
-        return updated;
-    }
-
-    private static void RestoreLegacyBackupsIfAny()
-    {
-        try
-        {
-            if (!File.Exists(LegacyBackupFilePath)) return;
-            string json = File.ReadAllText(LegacyBackupFilePath);
-            var backups = JsonSerializer.Deserialize<List<EndpointBackupEntry>>(json);
-            if (backups != null)
-            {
-                foreach (var entry in backups)
-                {
-                    string subKeyPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{entry.DataFlow}\{entry.EndpointGuid}\Properties";
-                    using var propKey = Registry.LocalMachine.OpenSubKey(
-                        subKeyPath,
-                        RegistryKeyPermissionCheck.ReadWriteSubTree,
-                        RegistryRights.SetValue | RegistryRights.QueryValues);
-
-                    if (propKey != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(entry.OriginalDeviceDesc))
-                            propKey.SetValue(PropKeyDeviceDesc, entry.OriginalDeviceDesc, RegistryValueKind.String);
-                        if (!string.IsNullOrWhiteSpace(entry.OriginalInterfaceName))
-                            propKey.SetValue(PropKeyInterfaceFriendlyName, entry.OriginalInterfaceName, RegistryValueKind.String);
-                        propKey.DeleteValue(PropKeyDeviceFriendlyName, false);
-                    }
-                }
-            }
-            File.Delete(LegacyBackupFilePath);
-        }
-        catch { }
-    }
-
-    // Endpoint device nodes left over from the app's former name (VoidPatch) keep their old names after the rename.
-    private static void RemoveLegacyVoidPatchEndpoints()
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -WindowStyle Hidden -Command \"Get-PnpDevice -Class AudioEndpoint | Where-Object FriendlyName -like '*VoidPatch*' | ForEach-Object { pnputil /remove-device $_.InstanceId | Out-Null; $_.InstanceId }\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true
-            };
-            using var p = Process.Start(psi);
-            string removed = p?.StandardOutput.ReadToEnd() ?? string.Empty;
-            p?.WaitForExit(15000);
-            int count = removed.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            if (count > 0)
-                Log($"Removed {count} legacy VoidPatch endpoint device nodes");
-        }
-        catch { }
-    }
-
-    private static void RestartWindowsAudioServiceSoft()
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -WindowStyle Hidden -Command \"Restart-Service -Name Audiosrv -Force -ErrorAction SilentlyContinue\"",
-                CreateNoWindow = true,
-                UseShellExecute = false
-            };
-            using var p = Process.Start(psi);
-            p?.WaitForExit(6000);
-        }
-        catch { }
-    }
-
-    private static List<LeylineDriverNodeRecord> LoadNodes()
-    {
-        try
-        {
-            if (File.Exists(NodesFilePath))
-            {
-                string json = File.ReadAllText(NodesFilePath);
-                return JsonSerializer.Deserialize<List<LeylineDriverNodeRecord>>(json) ?? new();
-            }
-        }
-        catch { }
-        return new List<LeylineDriverNodeRecord>();
-    }
-
-    private static void SaveNodes(List<LeylineDriverNodeRecord> nodes)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(NodesFilePath)!);
-            string json = JsonSerializer.Serialize(nodes, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(NodesFilePath, json);
-        }
-        catch { }
     }
 
     #region SetupAPI & NewDev P/Invoke
@@ -612,9 +488,6 @@ public static class LeylineDriverService
     [DllImport("setupapi.dll", SetLastError = true)]
     private static extern IntPtr SetupDiCreateDeviceInfoList(ref Guid ClassGuid, IntPtr hwndParent);
 
-    [DllImport("setupapi.dll", SetLastError = true)]
-    private static extern IntPtr SetupDiCreateDeviceInfoList(IntPtr ClassGuid, IntPtr hwndParent);
-
     [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool SetupDiCreateDeviceInfoW(
         IntPtr DeviceInfoSet,
@@ -623,14 +496,6 @@ public static class LeylineDriverService
         string DeviceDescription,
         IntPtr hwndParent,
         uint CreationFlags,
-        ref SP_DEVINFO_DATA DeviceInfoData);
-
-    [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool SetupDiOpenDeviceInfoW(
-        IntPtr DeviceInfoSet,
-        string DeviceInstanceId,
-        IntPtr hwndParent,
-        uint OpenFlags,
         ref SP_DEVINFO_DATA DeviceInfoData);
 
     [DllImport("setupapi.dll", SetLastError = true)]
