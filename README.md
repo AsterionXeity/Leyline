@@ -24,18 +24,18 @@
    - Includes 1-click backup & restore to original endpoint names at any time.
    - Complete WDM/WaveRT kernel driver source & INF package included in `G:\Leyline\driver\LeylineVAD\`.
 
-4. **VST2 / VST3 Hosting + Built-in Zero-Latency Studio DSP**
+4. **VST2 / VST3 Hosting + Zero-Latency**
    - **Built-in Studio DSP Rack** on every channel strip & master bus:
-     - **VoidGate**: Noise Gate (Threshold, Release)
-     - **VoidEQ**: 3-Band Studio Equalizer (100 Hz Low Shelf, 1.1 kHz Mid Peak, 8 kHz High Shelf)
-     - **VoidComp**: Studio Compressor (Threshold, Ratio, Makeup Gain)
-     - **VoidLimiter**: Brickwall Output Ceiling Limiter
+     - **VoidGate**: Noise Gate
+     - **VoidEQ**: 3-Band Studio Equalizer (100 Hz Low Shelf, 1.1 kHz Mid Peak, 8 kHz High Shelf) 16-band soon.
+     - **VoidComp**: Studio Compressor
+     - **VoidLimiter**: Limiter
    - **External 64-bit VST3 (`.vst3`) & VST2 (`.dll`) Host**:
      - Automatically scans `C:\Program Files\Common Files\VST3` and VST2 folders.
-     - Hosts native plugin GUI editors (`IPlugView` / `effEditOpen`) plus a parameter slider rack.
+     - Hosts native plugin GUI editors plus a parameter slider rack.
 
-5. **Built-in Soundboard with Global Hotkeys**
-   - Pre-loaded with 8 synthesized studio sound effects (`MLG Airhorn`, `Censor Beep`, `Sub Bass Drop`, `Ba-Dum Tss`, `Victory Fanfare`, `Sci-Fi Laser`, `8-Bit Coin`, `Dramatic Hit`) and supports `.wav`, `.mp3`, `.ogg`, `.flac`, and `.m4a`.
+5. **Built-in Soundboard with Global Hotkeys** (broken)
+   - ~~Pre-loaded with 8 synthesized studio sound effects (`MLG Airhorn`, `Censor Beep`, `Sub Bass Drop`, `Ba-Dum Tss`, `Victory Fanfare`, `Sci-Fi Laser`, `8-Bit Coin`, `Dramatic Hit`) and~~ supports `.wav`, `.mp3`, `.ogg`, `.flac`, and `.m4a`.
    - Per-pad volume, playback mode (`Stop Toggle`, `One-Shot`, `Overlap`, `Loop`), independent Monitor/Stream routing, and system-wide **Global Hotkeys** (`Ctrl+Shift+1..8`, `Ctrl+Shift+0` Panic Stop).
 
 ## Running & Installing
