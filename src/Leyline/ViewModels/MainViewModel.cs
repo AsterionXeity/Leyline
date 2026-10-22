@@ -52,6 +52,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // Channel Configuration Modal State (Screenshot 2)
     private bool _isChannelConfigModalOpen;
     private ChannelStripModel? _selectedConfigChannel;
+    private bool _isMixConfigModalOpen;
+    private OutputMixBusModel? _selectedConfigMix;
+    private int _selectedConfigMixIndex = -1;
+    private string _selectedMixMainOutputText = string.Empty;
+
+    // The engine has four mixes (Personal, Stream, Discord Record, Mic Rec); custom mixes have no outputs yet
+    private const int EngineMixCount = 4;
     private int _selectedChannelConfigTabIndex; // 0: Apps, 1: Audio effects
     private bool _isAddAppPickerOpen;
 
@@ -123,6 +130,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     MixBuses[i].IsListeningTarget = (i == _listeningMixIndex);
 
                 Engine.SetListeningMixIndex(_listeningMixIndex);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -186,6 +194,142 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _selectedConfigChannel, value);
     }
 
+    // ---- Mix settings window (pencil on a mix header): name, icon, extra outputs ----
+
+    public bool IsMixConfigModalOpen
+    {
+        get => _isMixConfigModalOpen;
+        set => SetProperty(ref _isMixConfigModalOpen, value);
+    }
+
+    public OutputMixBusModel? SelectedConfigMix
+    {
+        get => _selectedConfigMix;
+        private set => SetProperty(ref _selectedConfigMix, value);
+    }
+
+    /// <summary>Where the selected mix plays without extra outputs (listening device, its cable).</summary>
+    public string SelectedMixMainOutputText
+    {
+        get => _selectedMixMainOutputText;
+        private set => SetProperty(ref _selectedMixMainOutputText, value);
+    }
+
+    public ObservableCollection<AudioDeviceInfo> SelectedMixExtraOutputs { get; } = new();
+
+    /// <summary>Output devices that can be added to the selected mix.</summary>
+    public ObservableCollection<AudioDeviceInfo> MixOutputChoices { get; } = new();
+
+    public bool SelectedMixHasNoExtraOutputs => SelectedMixExtraOutputs.Count == 0;
+
+    public void OpenMixConfig(int mixIndex)
+    {
+        if (mixIndex < 0 || mixIndex >= MixBuses.Count)
+            return;
+        _selectedConfigMixIndex = mixIndex;
+        SelectedConfigMix = MixBuses[mixIndex];
+        RefreshMixConfigLists();
+        IsMixConfigModalOpen = true;
+    }
+
+    public void CloseMixConfig()
+    {
+        IsMixConfigModalOpen = false;
+        SaveConfig();
+    }
+
+    public void AddMixExtraOutput(string deviceId)
+    {
+        if (SelectedConfigMix is not { } mix || string.IsNullOrWhiteSpace(deviceId) ||
+            mix.ExtraOutputDeviceIds.Contains(deviceId, StringComparer.OrdinalIgnoreCase))
+            return;
+        mix.ExtraOutputDeviceIds.Add(deviceId);
+        ApplyMixExtraOutputs(_selectedConfigMixIndex);
+        RefreshMixConfigLists();
+    }
+
+    public void RemoveMixExtraOutput(string deviceId)
+    {
+        if (SelectedConfigMix is not { } mix)
+            return;
+        var existing = mix.ExtraOutputDeviceIds.FirstOrDefault(id => id.Equals(deviceId, StringComparison.OrdinalIgnoreCase));
+        if (existing == null)
+            return;
+        mix.ExtraOutputDeviceIds.Remove(existing);
+        ApplyMixExtraOutputs(_selectedConfigMixIndex);
+        RefreshMixConfigLists();
+    }
+
+    // Saved extra outputs of every mix (startup, configuration import)
+    private void ApplyAllMixExtraOutputs()
+    {
+        for (int i = 0; i < EngineMixCount; i++)
+            Engine.SetMixExtraOutputs(i, i < MixBuses.Count ? MixBuses[i].ExtraOutputDeviceIds : []);
+        UpdateMixOutputCounts();
+    }
+
+    private void ApplyMixExtraOutputs(int mixIndex)
+    {
+        if (mixIndex >= 0 && mixIndex < Math.Min(EngineMixCount, MixBuses.Count))
+            Engine.SetMixExtraOutputs(mixIndex, MixBuses[mixIndex].ExtraOutputDeviceIds);
+        UpdateMixOutputCounts();
+    }
+
+    /// <summary>Refreshes each mix header's "N outputs" from what the engine is playing to.</summary>
+    public void UpdateMixOutputCounts()
+    {
+        for (int i = 0; i < MixBuses.Count; i++)
+            MixBuses[i].OutputCount = i < EngineMixCount ? Engine.GetMixOutputCount(i) : 0;
+    }
+
+    private void RefreshMixConfigLists()
+    {
+        if (SelectedConfigMix is not { } mix)
+            return;
+        int index = _selectedConfigMixIndex;
+
+        // Physical outputs only: playing a mix into a Leyline cable would feed it back into a channel
+        var outputs = AudioEngine.EnumerateDevices().Where(d => d.Kind == AudioEndpointKind.RenderOutput).ToList();
+
+        SelectedMixExtraOutputs.Clear();
+        foreach (string id in mix.ExtraOutputDeviceIds)
+        {
+            SelectedMixExtraOutputs.Add(outputs.FirstOrDefault(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+                                        ?? new AudioDeviceInfo { Id = id, Name = "Disconnected device", Kind = AudioEndpointKind.RenderOutput });
+        }
+        OnPropertyChanged(nameof(SelectedMixHasNoExtraOutputs));
+
+        string listeningId = index == ListeningMixIndex ? Config.MonitorOutputDeviceId : string.Empty;
+        MixOutputChoices.Clear();
+        foreach (var device in outputs)
+        {
+            if (!mix.ExtraOutputDeviceIds.Contains(device.Id, StringComparer.OrdinalIgnoreCase) &&
+                !device.Id.Equals(listeningId, StringComparison.OrdinalIgnoreCase))
+                MixOutputChoices.Add(device);
+        }
+
+        var lines = new List<string>();
+        if (index == ListeningMixIndex)
+        {
+            lines.Add(_selectedMonitorDevice is { IsNone: false } monitor
+                ? $"You're listening to this mix on {monitor.Name}."
+                : "You're listening to this mix, but no listening device is selected (top right).");
+        }
+        if (index == 1)
+        {
+            lines.Add(_selectedStreamDevice is { IsNone: false } stream
+                ? $"Plays to {stream.Name}."
+                : $"Plays to Stream Mix ({LeylineDriverService.DeviceName}) for OBS and other recording apps.");
+        }
+        if (index == 3)
+            lines.Add($"Plays to Microphone ({LeylineDriverService.DeviceName}), the microphone for Discord and other voice apps.");
+        if (index >= EngineMixCount)
+            lines.Add("Custom mixes don't play anywhere yet.");
+        if (lines.Count == 0)
+            lines.Add("Click the mix to listen to it, or add an output below.");
+        SelectedMixMainOutputText = string.Join("\n", lines);
+    }
+
     public int SelectedChannelConfigTabIndex
     {
         get => _selectedChannelConfigTabIndex;
@@ -214,6 +358,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 string id = value?.Id ?? string.Empty;
                 Config.MonitorOutputDeviceId = id;
                 Engine.SetMonitorOutputDevice(id);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -229,6 +374,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 string id = value?.Id ?? string.Empty;
                 Config.StreamOutputDeviceId = id;
                 Engine.SetStreamOutputDevice(id);
+                UpdateMixOutputCounts();
                 SaveConfig();
             }
         }
@@ -795,6 +941,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshAudioDevices();
         ConnectMixOutputCables();
         InitializeChannelsAndPads();
+        ApplyAllMixExtraOutputs();
 
         if (_dispatcherQueue != null)
         {
@@ -898,6 +1045,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Engine.SetMonitorOutputDevice(_selectedMonitorDevice?.Id);
         Engine.SetStreamOutputDevice(_selectedStreamDevice?.Id);
+        UpdateMixOutputCounts();
         UpdatePopoverFilteredItems();
     }
 
@@ -1546,6 +1694,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         RefreshAudioDevices();
         InitializeChannelsAndPads();
+        ApplyAllMixExtraOutputs();
         Hotkeys.RebindAll(SoundPads);
         ScanVstPlugins(forceDeepProbe: false);
         UpdateChannelRoutedAppCounts();

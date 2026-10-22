@@ -272,7 +272,7 @@
                             <!-- MATRIX COLUMN HEADERS ROW (Personal Mix, Stream Mix, Discord Record Mix, Mic Rec Mix, +) -->
                             <Grid Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="288"/>
+                                    <ColumnDefinition Width="312"/>
                                     <ColumnDefinition Width="216"/>
                                     <ColumnDefinition Width="216"/>
                                     <ColumnDefinition Width="216"/>
@@ -282,82 +282,135 @@
 
                                 <Grid Grid.Column="0"/>
 
-                                <!-- Column 1: Personal Mix -->
-                                <Border Grid.Column="1" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0"
+                                <!-- Column 1: Personal Mix (click to listen to it; pencil opens its settings) -->
+                                <Border Grid.Column="1" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0,4,0"
                                         PointerPressed="SelectListeningMix0_PointerPressed" RightTapped="OpenMonitorMasterFx_RightTapped"
-                                        ToolTipService.ToolTip="Left-click to Monitor Personal Mix • Right-click for Master DSP">
+                                        ToolTipService.ToolTip="Click to listen to this mix • Right-click for master effects">
                                     <Grid>
-                                        <Border Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.ColumnSpan="2" Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
                                                 VerticalAlignment="Top" HorizontalAlignment="Center"
                                                 Visibility="{Binding MixBuses[0].IsListeningTarget, Converter={StaticResource BoolToVis}}"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                             <Border Width="28" Height="28" CornerRadius="6" Background="#F2F2F7">
-                                                <FontIcon Glyph="&#xE7F6;" FontSize="14" Foreground="#141418"/>
+                                                <FontIcon Glyph="{Binding MixBuses[0].GlyphIcon}" FontSize="14" Foreground="#141418"/>
                                             </Border>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Personal Mix" FontWeight="SemiBold" FontSize="12.5" Foreground="{ThemeResource TextPrimaryBrush}"/>
-                                                <TextBlock Text="1 output" FontSize="10.5" Foreground="{ThemeResource TextMutedBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[0].Name}" FontWeight="SemiBold" FontSize="12.5" MaxWidth="124"
+                                                           TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[0].OutputSubtitle}" FontSize="10.5" Foreground="{ThemeResource TextMutedBrush}"
+                                                           Visibility="{Binding MixBuses[0].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                             </StackPanel>
                                         </StackPanel>
+                                        <Button Grid.Column="1" Tag="0" Click="EditMix_Click" Width="26" Height="26" Padding="0" VerticalAlignment="Center"
+                                                Background="Transparent" BorderThickness="0" CornerRadius="5" ToolTipService.ToolTip="Edit mix">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                        </Button>
                                         <Border Width="18" Height="2.5" CornerRadius="1.2" Background="{ThemeResource MeterGreenBrush}"
-                                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+                                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,1"
+                                                Visibility="{Binding MixBuses[0].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                     </Grid>
                                 </Border>
 
-                                <!-- Column 2: Stream Mix -->
-                                <Border Grid.Column="2" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0"
+                                <!-- Column 2: Stream Mix (click to listen to it; pencil opens its settings) -->
+                                <Border Grid.Column="2" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0,4,0"
                                         PointerPressed="SelectListeningMix1_PointerPressed"
-                                        ToolTipService.ToolTip="Left-click to Monitor Stream Mix">
+                                        ToolTipService.ToolTip="Click to listen to this mix">
                                     <Grid>
-                                        <Border Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.ColumnSpan="2" Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
                                                 VerticalAlignment="Top" HorizontalAlignment="Center"
                                                 Visibility="{Binding MixBuses[1].IsListeningTarget, Converter={StaticResource BoolToVis}}"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                             <Border Width="28" Height="28" CornerRadius="6" Background="#F2F2F7">
-                                                <FontIcon Glyph="&#xE701;" FontSize="14" Foreground="#141418"/>
+                                                <FontIcon Glyph="{Binding MixBuses[1].GlyphIcon}" FontSize="14" Foreground="#141418"/>
                                             </Border>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Stream Mix" FontWeight="SemiBold" FontSize="12.5" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[1].Name}" FontWeight="SemiBold" FontSize="12.5" MaxWidth="124"
+                                                           TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[1].OutputSubtitle}" FontSize="10.5" Foreground="{ThemeResource TextMutedBrush}"
+                                                           Visibility="{Binding MixBuses[1].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                             </StackPanel>
                                         </StackPanel>
+                                        <Button Grid.Column="1" Tag="1" Click="EditMix_Click" Width="26" Height="26" Padding="0" VerticalAlignment="Center"
+                                                Background="Transparent" BorderThickness="0" CornerRadius="5" ToolTipService.ToolTip="Edit mix">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                        </Button>
+                                        <Border Width="18" Height="2.5" CornerRadius="1.2" Background="{ThemeResource MeterGreenBrush}"
+                                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,1"
+                                                Visibility="{Binding MixBuses[1].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                     </Grid>
                                 </Border>
 
-                                <!-- Column 3: Discord Record Mix -->
-                                <Border Grid.Column="3" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0"
+                                <!-- Column 3: Discord Record Mix (click to listen to it; pencil opens its settings) -->
+                                <Border Grid.Column="3" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0,4,0"
                                         PointerPressed="SelectListeningMix2_PointerPressed"
-                                        ToolTipService.ToolTip="Left-click to Monitor Discord Record Mix">
+                                        ToolTipService.ToolTip="Click to listen to this mix">
                                     <Grid>
-                                        <Border Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.ColumnSpan="2" Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
                                                 VerticalAlignment="Top" HorizontalAlignment="Center"
                                                 Visibility="{Binding MixBuses[2].IsListeningTarget, Converter={StaticResource BoolToVis}}"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                             <Border Width="28" Height="28" CornerRadius="6" Background="#F2F2F7">
-                                                <FontIcon Glyph="&#xE716;" FontSize="13.5" Foreground="#141418"/>
+                                                <FontIcon Glyph="{Binding MixBuses[2].GlyphIcon}" FontSize="14" Foreground="#141418"/>
                                             </Border>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Discord Record Mix" FontWeight="SemiBold" FontSize="12.5" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[2].Name}" FontWeight="SemiBold" FontSize="12.5" MaxWidth="124"
+                                                           TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[2].OutputSubtitle}" FontSize="10.5" Foreground="{ThemeResource TextMutedBrush}"
+                                                           Visibility="{Binding MixBuses[2].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                             </StackPanel>
                                         </StackPanel>
+                                        <Button Grid.Column="1" Tag="2" Click="EditMix_Click" Width="26" Height="26" Padding="0" VerticalAlignment="Center"
+                                                Background="Transparent" BorderThickness="0" CornerRadius="5" ToolTipService.ToolTip="Edit mix">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                        </Button>
+                                        <Border Width="18" Height="2.5" CornerRadius="1.2" Background="{ThemeResource MeterGreenBrush}"
+                                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,1"
+                                                Visibility="{Binding MixBuses[2].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                     </Grid>
                                 </Border>
 
-                                <!-- Column 4: Mic Rec Mix -->
-                                <Border Grid.Column="4" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0"
+                                <!-- Column 4: Mic Rec Mix (click to listen to it; pencil opens its settings) -->
+                                <Border Grid.Column="4" Height="52" Background="{ThemeResource BgCardBrush}" CornerRadius="6" Margin="4,0" Padding="12,0,4,0"
                                         PointerPressed="SelectListeningMix3_PointerPressed"
-                                        ToolTipService.ToolTip="Left-click to Monitor Mic Rec Mix">
+                                        ToolTipService.ToolTip="Click to listen to this mix">
                                     <Grid>
-                                        <Border Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.ColumnSpan="2" Width="16" Height="2.5" Background="{ThemeResource AccentPrimaryBrush}" CornerRadius="1.2"
                                                 VerticalAlignment="Top" HorizontalAlignment="Center"
                                                 Visibility="{Binding MixBuses[3].IsListeningTarget, Converter={StaticResource BoolToVis}}"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                             <Border Width="28" Height="28" CornerRadius="6" Background="#F2F2F7">
-                                                <FontIcon Glyph="&#xE7C8;" FontSize="14" Foreground="#141418"/>
+                                                <FontIcon Glyph="{Binding MixBuses[3].GlyphIcon}" FontSize="14" Foreground="#141418"/>
                                             </Border>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Mic Rec Mix" FontWeight="SemiBold" FontSize="12.5" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[3].Name}" FontWeight="SemiBold" FontSize="12.5" MaxWidth="124"
+                                                           TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding MixBuses[3].OutputSubtitle}" FontSize="10.5" Foreground="{ThemeResource TextMutedBrush}"
+                                                           Visibility="{Binding MixBuses[3].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                             </StackPanel>
                                         </StackPanel>
+                                        <Button Grid.Column="1" Tag="3" Click="EditMix_Click" Width="26" Height="26" Padding="0" VerticalAlignment="Center"
+                                                Background="Transparent" BorderThickness="0" CornerRadius="5" ToolTipService.ToolTip="Edit mix">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                        </Button>
+                                        <Border Width="18" Height="2.5" CornerRadius="1.2" Background="{ThemeResource MeterGreenBrush}"
+                                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,1"
+                                                Visibility="{Binding MixBuses[3].HasOutputs, Converter={StaticResource BoolToVis}}"/>
                                     </Grid>
                                 </Border>
 
@@ -377,7 +430,7 @@
                                               DragOver="ChannelRow_DragOver"
                                               Drop="ChannelRow_Drop">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="288"/>
+                                                <ColumnDefinition Width="312"/>
                                                 <ColumnDefinition Width="216"/>
                                                 <ColumnDefinition Width="216"/>
                                                 <ColumnDefinition Width="216"/>
@@ -1177,8 +1230,32 @@
                         <Grid Grid.Column="0" Margin="0,0,16,0">
                             <Button Width="32" Height="26" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,14,0"
                                     Background="Transparent" Foreground="{ThemeResource TextSecondaryBrush}" BorderThickness="0"
-                                    Click="CycleChannelColorAndIcon_Click" ToolTipService.ToolTip="Change channel icon &amp; color">
+                                    ToolTipService.ToolTip="Change channel icon &amp; color">
                                 <FontIcon Glyph="&#xE712;" FontSize="14"/>
+                                <Button.Flyout>
+                                    <Flyout x:Name="ChannelIconFlyout" Placement="RightEdgeAlignedTop">
+                                        <StackPanel Width="300" Spacing="8">
+                                            <TextBlock Text="Icon" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                            <GridView x:Name="ChannelIconPicker" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ChannelIcon_ItemClick">
+                                                <GridView.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Width="36" Height="36" CornerRadius="6" Background="{ThemeResource BgCardBrush}">
+                                                            <FontIcon Glyph="{Binding}" FontSize="16" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </GridView.ItemTemplate>
+                                            </GridView>
+                                            <TextBlock Text="Color" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                            <GridView x:Name="ChannelColorPicker" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ChannelColor_ItemClick">
+                                                <GridView.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Ellipse Width="26" Height="26" Margin="5" Fill="{Binding Converter={StaticResource HexToBrush}}"/>
+                                                    </DataTemplate>
+                                                </GridView.ItemTemplate>
+                                            </GridView>
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
                             </Button>
 
                             <!-- Big 186x186 Rounded Square Card with +7 Badge (Screenshot 3) -->
@@ -1609,6 +1686,117 @@
                         <Button Grid.Column="2" Content="Close window" Style="{StaticResource MatPrimaryBtn}"
                                 Click="CloseChannelConfigModal_Click"/>
                     </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ================================================================== -->
+        <!-- MIX SETTINGS MODAL (pencil on a mix header): name, icon, outputs   -->
+        <!-- ================================================================== -->
+        <Grid x:Name="MixConfigModalOverlay" Grid.RowSpan="2" Background="{ThemeResource ModalOverlayBrush}"
+              Visibility="{Binding IsMixConfigModalOpen, Converter={StaticResource BoolToVis}}">
+            <Border Width="736" Height="532" Background="{ThemeResource BgModalBrush}"
+                    BorderBrush="#323237" BorderThickness="1" CornerRadius="10"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid Margin="18,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Top Bar: Editable Mix Name + Close X -->
+                    <Grid Grid.Row="0" Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="312" Background="{ThemeResource BgCardBrush}" CornerRadius="5"
+                                BorderBrush="{ThemeResource AccentPrimaryBrush}" BorderThickness="0,0,0,2">
+                            <TextBox Text="{Binding SelectedConfigMix.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Background="Transparent" Foreground="{ThemeResource TextPrimaryBrush}" BorderThickness="0"
+                                     FontSize="13" FontWeight="SemiBold" Padding="10,6"/>
+                        </Border>
+
+                        <Button Grid.Column="2" Width="30" Height="30" Padding="0"
+                                Background="Transparent" Foreground="{ThemeResource TextSecondaryBrush}" BorderThickness="0"
+                                Click="CloseMixConfigModal_Click">
+                            <FontIcon Glyph="&#xE711;" FontSize="12.5"/>
+                        </Button>
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="312"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- LEFT: Large Mix Icon + Icon Picker -->
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0" Spacing="14">
+                            <Border Width="150" Height="150" Background="#F2F2F7" CornerRadius="20" HorizontalAlignment="Center" Margin="0,6,0,0">
+                                <FontIcon Glyph="{Binding SelectedConfigMix.GlyphIcon}" FontSize="64" Foreground="#141418"/>
+                            </Border>
+                            <TextBlock Text="Icon" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}" Margin="6,0,0,-6"/>
+                            <GridView x:Name="MixIconPicker" SelectionMode="None" IsItemClickEnabled="True" ItemClick="MixIcon_ItemClick"
+                                      HorizontalAlignment="Center">
+                                <GridView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="36" Height="36" CornerRadius="6" Background="{ThemeResource BgCardBrush}">
+                                            <FontIcon Glyph="{Binding}" FontSize="16" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </GridView.ItemTemplate>
+                            </GridView>
+                        </StackPanel>
+
+                        <!-- RIGHT: Where the Mix Plays -->
+                        <Border Grid.Column="1" Background="{ThemeResource BgCardBrush}" CornerRadius="8" Padding="16">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Outputs" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                    <TextBlock Text="{Binding SelectedMixMainOutputText}" FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextSecondaryBrush}"/>
+
+                                    <TextBlock Text="Also play this mix on" FontSize="12.5" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource TextPrimaryBrush}" Margin="0,12,0,0"/>
+                                    <TextBlock Text="No other devices." FontSize="12" Foreground="{ThemeResource TextMutedBrush}"
+                                               Visibility="{Binding SelectedMixHasNoExtraOutputs, Converter={StaticResource BoolToVis}}"/>
+                                    <ItemsControl ItemsSource="{Binding SelectedMixExtraOutputs}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Height="36" Margin="0,0,0,4" Padding="10,0,4,0" CornerRadius="6" Background="{ThemeResource BgModalBrush}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <FontIcon Glyph="&#xE7F5;" FontSize="13" Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="12.5" Margin="10,0" VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                                        <Button Grid.Column="2" Tag="{Binding Id}" Click="RemoveMixOutput_Click" Width="28" Height="28" Padding="0"
+                                                                Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Stop playing on this device">
+                                                            <FontIcon Glyph="&#xE711;" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}"/>
+                                                        </Button>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ComboBox x:Name="MixAddOutputCombo" ItemsSource="{Binding MixOutputChoices}" DisplayMemberPath="Name"
+                                              PlaceholderText="Add an output device..." HorizontalAlignment="Stretch"
+                                              SelectionChanged="MixAddOutputCombo_SelectionChanged"/>
+                                    <TextBlock Text="For example speakers next to your headphones. Every device plays the mix at the same time."
+                                               FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextMutedBrush}"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+
+                    <!-- Bottom Footer: "Close window" -->
+                    <Button Grid.Row="2" Margin="0,14,0,0" HorizontalAlignment="Right" Content="Close window"
+                            Style="{StaticResource MatPrimaryBtn}" Click="CloseMixConfigModal_Click"/>
                 </Grid>
             </Border>
         </Grid>

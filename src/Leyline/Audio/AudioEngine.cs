@@ -32,6 +32,15 @@ public sealed class AudioEngine : IDisposable
     private WasapiOut? _monitorOut;
     private WasapiOut? _streamOut;
     private WasapiOut? _micRecOut;
+
+    // The monitor's copy of the mix it plays, when that mix already has its own output (see GetMonitorSource)
+    private (MasterBusSampleProvider Mix, BufferedWaveProvider Tap)? _monitorTap;
+
+    // Extra devices each mix also plays to (index as _listeningMixIndex), and the outputs playing them
+    private readonly List<string>[] _extraOutputIds = [new(), new(), new(), new()];
+    private readonly List<ExtraOutput> _extraOutputs = new();
+
+    private sealed record ExtraOutput(int Mix, string DeviceId, WasapiOut Output, BufferedWaveProvider? Tap);
     private System.Threading.Timer? _soundboardPumpTimer;
     private string _currentMonitorDeviceId = string.Empty;
     private string _currentStreamDeviceId = string.Empty;
@@ -218,7 +227,8 @@ public sealed class AudioEngine : IDisposable
         lock (_engineLock)
         {
             string previousId = _currentMonitorDeviceId;
-            ApplyMonitorOutputDevice(deviceId);
+            _currentMonitorDeviceId = deviceId ?? string.Empty;
+            RebuildMonitorAndExtraOutputs();
             RestartChannelsOnDevices(previousId, _currentMonitorDeviceId);
         }
     }
@@ -230,6 +240,9 @@ public sealed class AudioEngine : IDisposable
             _monitorOut?.Stop();
             _monitorOut?.Dispose();
             _monitorOut = null;
+            if (_monitorTap is { } previousTap)
+                previousTap.Mix.RemoveTap(previousTap.Tap);
+            _monitorTap = null;
             _currentMonitorDeviceId = deviceId ?? string.Empty;
 
             // If user selected "None (Unselected)", keep monitoring completely off
@@ -337,19 +350,123 @@ public sealed class AudioEngine : IDisposable
     /// </summary>
     private ISampleProvider GetMonitorSource(int mixIndex)
     {
-        return mixIndex switch
-        {
-            1 => _streamOut != null ? _streamMasterProvider.GetMonitorTap() : _streamMasterProvider,
-            2 => _discordMasterProvider,
-            3 => _micRecOut != null ? _micRecMasterProvider.GetMonitorTap() : _micRecMasterProvider,
-            _ => _personalMasterProvider
-        };
+        var mix = MixProvider(mixIndex);
+        if (!HasOwnOutput(mixIndex))
+            return mix;
+
+        var (reader, tap) = mix.AddTap();
+        _monitorTap = (mix, tap);
+        return reader;
     }
 
+    private MasterBusSampleProvider MixProvider(int mixIndex) => mixIndex switch
+    {
+        1 => _streamMasterProvider,
+        2 => _discordMasterProvider,
+        3 => _micRecMasterProvider,
+        _ => _personalMasterProvider
+    };
+
+    // Stream Mix (its cable or device) and Mic Rec (the Microphone cable) are read by their own outputs
+    private bool HasOwnOutput(int mixIndex) =>
+        (mixIndex == 1 && _streamOut != null) || (mixIndex == 3 && _micRecOut != null);
+
+    // A mix's own output changed: the monitor and extra outputs on it switch between reading it and a copy
     private void RefreshMonitorSourceIfListeningTo(int mixIndex)
     {
-        if (_listeningMixIndex == mixIndex && !string.IsNullOrWhiteSpace(_currentMonitorDeviceId))
-            ApplyMonitorOutputDevice(_currentMonitorDeviceId);
+        if (_listeningMixIndex == mixIndex || _extraOutputIds[mixIndex].Count > 0)
+            RebuildMonitorAndExtraOutputs();
+    }
+
+    /// <summary>
+    /// Extra devices a mix also plays to, besides the monitor (when listening to it) and the mix's own output, such as
+    /// speakers next to the headphones. Leyline's own cables and the monitor device itself are not allowed by the UI.
+    /// </summary>
+    public void SetMixExtraOutputs(int mixIndex, IEnumerable<string> deviceIds)
+    {
+        if (mixIndex < 0 || mixIndex >= _extraOutputIds.Length)
+            return;
+
+        lock (_engineLock)
+        {
+            var previous = _extraOutputIds[mixIndex];
+            _extraOutputIds[mixIndex] = deviceIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            RebuildMonitorAndExtraOutputs();
+
+            foreach (string id in previous.Union(_extraOutputIds[mixIndex], StringComparer.OrdinalIgnoreCase))
+                RestartChannelsOnDevices(string.Empty, id);
+        }
+    }
+
+    /// <summary>Devices a mix is playing to right now (monitor, its own output and extra outputs).</summary>
+    public int GetMixOutputCount(int mixIndex)
+    {
+        lock (_engineLock)
+        {
+            int count = _extraOutputs.Count(e => e.Mix == mixIndex);
+            if (_monitorOut != null && _listeningMixIndex == mixIndex)
+                count++;
+            if (HasOwnOutput(mixIndex))
+                count++;
+            return count;
+        }
+    }
+
+    // Each mix is read by one output; any other output on it plays a copy (two readers would each get every other
+    // block). Which output reads the mix depends on the monitor, the mix's own output and its extra outputs, so the
+    // monitor and all extra outputs are rebuilt together whenever one of them changes.
+    private void RebuildMonitorAndExtraOutputs()
+    {
+        foreach (var extra in _extraOutputs)
+        {
+            extra.Output.Stop();
+            extra.Output.Dispose();
+            if (extra.Tap != null)
+                MixProvider(extra.Mix).RemoveTap(extra.Tap);
+        }
+        _extraOutputs.Clear();
+
+        ApplyMonitorOutputDevice(_currentMonitorDeviceId);
+
+        using var enumerator = new MMDeviceEnumerator();
+        for (int mixIndex = 0; mixIndex < _extraOutputIds.Length; mixIndex++)
+        {
+            var mix = MixProvider(mixIndex);
+            bool mixIsRead = HasOwnOutput(mixIndex) || (_monitorOut != null && _listeningMixIndex == mixIndex);
+
+            foreach (string deviceId in _extraOutputIds[mixIndex])
+            {
+                if (_monitorOut != null && _listeningMixIndex == mixIndex &&
+                    deviceId.Equals(_currentMonitorDeviceId, StringComparison.OrdinalIgnoreCase))
+                    continue;   // already playing this mix there
+
+                BufferedWaveProvider? tap = null;
+                try
+                {
+                    var device = enumerator.GetDevice(deviceId);
+                    if (device == null || device.State != DeviceState.Active || device.DataFlow != DataFlow.Render)
+                        continue;
+
+                    ISampleProvider source = mix;
+                    if (mixIsRead)
+                        (source, tap) = mix.AddTap();
+
+                    var output = new WasapiOut(device, AudioClientShareMode.Shared, true, OutputLatencyMs);
+                    output.Init(source);
+                    output.Play();
+                    _extraOutputs.Add(new ExtraOutput(mixIndex, deviceId, output, tap));
+                    mixIsRead = true;
+                }
+                catch
+                {
+                    if (tap != null)
+                        mix.RemoveTap(tap);
+                }
+            }
+        }
     }
 
     private void ApplyStreamOutputDevice(string? deviceId)
@@ -399,7 +516,8 @@ public sealed class AudioEngine : IDisposable
 
         return deviceId.Equals(_currentMonitorDeviceId, StringComparison.OrdinalIgnoreCase) ||
                deviceId.Equals(_currentStreamDeviceId, StringComparison.OrdinalIgnoreCase) ||
-               deviceId.Equals(_currentMicRecDeviceId, StringComparison.OrdinalIgnoreCase);
+               deviceId.Equals(_currentMicRecDeviceId, StringComparison.OrdinalIgnoreCase) ||
+               _extraOutputIds.Any(ids => ids.Contains(deviceId, StringComparer.OrdinalIgnoreCase));
     }
 
     // Restart channels bound to a device whose mix-output status changed, so the loopback guard re-evaluates.
@@ -530,6 +648,12 @@ public sealed class AudioEngine : IDisposable
             _streamOut?.Dispose();
             _micRecOut?.Stop();
             _micRecOut?.Dispose();
+            foreach (var extra in _extraOutputs)
+            {
+                extra.Output.Stop();
+                extra.Output.Dispose();
+            }
+            _extraOutputs.Clear();
 
             foreach (var ch in _channels)
                 ch.Dispose();
@@ -554,7 +678,8 @@ public sealed class AudioEngine : IDisposable
         private readonly Func<DspChainModel> _dspModelGetter;
         private readonly Func<float> _masterVolumeGetter;
         private readonly Action<float[], int, int>? _tapCallback;
-        private BufferedWaveProvider? _monitorTap;
+        private BufferedWaveProvider[] _taps = [];   // replaced, never changed in place: Read runs on an output thread
+        private readonly object _tapLock = new();
         private byte[] _tapBytes = [];
 
         public float SmoothedPeakLeft { get; private set; }
@@ -603,32 +728,41 @@ public sealed class AudioEngine : IDisposable
 
             _tapCallback?.Invoke(buffer, offset, read);
 
-            var tap = _monitorTap;
-            if (tap != null)
+            var taps = _taps;
+            if (taps.Length > 0)
             {
                 int bytes = read * sizeof(float);
                 if (_tapBytes.Length < bytes)
                     _tapBytes = new byte[bytes];
                 Buffer.BlockCopy(buffer, offset * sizeof(float), _tapBytes, 0, bytes);
-                tap.AddSamples(_tapBytes, 0, bytes);
+                foreach (var tap in taps)
+                    tap.AddSamples(_tapBytes, 0, bytes);
             }
 
             return read;
         }
 
         /// <summary>
-        /// A copy of this mix for the monitor to listen to while another output reads the mix itself.
-        /// Created on first use; from then on every block this mix produces is copied into it.
+        /// A copy of this mix for another output to play while one output reads the mix itself. Every block this mix
+        /// produces is copied into the tap until <see cref="RemoveTap"/>.
         /// </summary>
-        public ISampleProvider GetMonitorTap()
+        public (ISampleProvider Reader, BufferedWaveProvider Tap) AddTap()
         {
-            _monitorTap ??= new BufferedWaveProvider(Format)
+            var tap = new BufferedWaveProvider(Format)
             {
                 BufferDuration = TimeSpan.FromMilliseconds(250),
                 DiscardOnBufferOverflow = true,
                 ReadFully = true
             };
-            return new LowLatencyBufferReader(_monitorTap);
+            lock (_tapLock)
+                _taps = [.. _taps, tap];
+            return (new LowLatencyBufferReader(tap), tap);
+        }
+
+        public void RemoveTap(BufferedWaveProvider tap)
+        {
+            lock (_tapLock)
+                _taps = _taps.Where(t => !ReferenceEquals(t, tap)).ToArray();
         }
 
         public void DecayMeters(float decay)

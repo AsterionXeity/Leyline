@@ -43,11 +43,6 @@ public sealed partial class MainWindow : Window
         "#29B6F6", "#9C27B0", "#8D3B3B", "#EC407A", "#FBC02D", "#FF7043", "#448AFF", "#00E676"
     ];
 
-    private static readonly string[] ChannelIconPalette =
-    [
-        "🎮", "🌐", "🎵", "💬", "🎙️", "🖥️", "📺", "〰️", "🎸"
-    ];
-
     public MainWindow(MainViewModel vm)
     {
         InitializeComponent();
@@ -148,6 +143,9 @@ public sealed partial class MainWindow : Window
 
         ModalAddAppCombo.ItemsSource = _vm.ActiveAppSessions;
         ModalVstPickerCombo.ItemsSource = _vm.DiscoveredVstPlugins;
+        ChannelIconPicker.ItemsSource = IconGlyphs.Choices;
+        ChannelColorPicker.ItemsSource = ChannelColorPalette;
+        MixIconPicker.ItemsSource = IconGlyphs.Choices;
         ModalMicDeviceCombo.ItemsSource = _vm.CaptureDevicesWithNone;
         ModalVirtualBusCombo.ItemsSource = _vm.VirtualDevicesWithNone;
     }
@@ -430,6 +428,7 @@ public sealed partial class MainWindow : Window
 
     private void CloseChannelConfigModal_Click(object sender, RoutedEventArgs e)
     {
+        ChannelIconFlyout.Hide();
         _vm.IsChannelConfigModalOpen = false;
     }
 
@@ -458,18 +457,49 @@ public sealed partial class MainWindow : Window
     private void ModalAppsTab_Click(object sender, RoutedEventArgs e) => SelectModalTab(0);
     private void ModalEffectsTab_Click(object sender, RoutedEventArgs e) => SelectModalTab(1);
 
-    private void CycleChannelColorAndIcon_Click(object sender, RoutedEventArgs e)
+    // Channel window "..." picker (saved by the config auto-save)
+    private void ChannelIcon_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (_vm.SelectedConfigChannel == null) return;
-        var ch = _vm.SelectedConfigChannel;
-
-        int cIdx = Array.IndexOf(ChannelColorPalette, ch.AccentHex);
-        ch.AccentHex = ChannelColorPalette[(cIdx + 1) % ChannelColorPalette.Length];
-
-        int iIdx = Array.IndexOf(ChannelIconPalette, ch.Icon);
-        ch.Icon = ChannelIconPalette[(iIdx + 1) % ChannelIconPalette.Length];
-        _vm.SaveConfig();
+        if (_vm.SelectedConfigChannel != null && e.ClickedItem is string glyph)
+            _vm.SelectedConfigChannel.Icon = glyph;
     }
+
+    private void ChannelColor_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (_vm.SelectedConfigChannel != null && e.ClickedItem is string hex)
+            _vm.SelectedConfigChannel.AccentHex = hex;
+    }
+
+    #region Mix Settings Window
+
+    private void EditMix_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } && int.TryParse(tag, out int index))
+            _vm.OpenMixConfig(index);
+    }
+
+    private void CloseMixConfigModal_Click(object sender, RoutedEventArgs e) => _vm.CloseMixConfig();
+
+    private void MixIcon_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (_vm.SelectedConfigMix != null && e.ClickedItem is string glyph)
+            _vm.SelectedConfigMix.Icon = glyph;
+    }
+
+    private void RemoveMixOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string deviceId })
+            _vm.RemoveMixExtraOutput(deviceId);
+    }
+
+    private void MixAddOutputCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Adding refills the combo's list, so do it after this selection event
+        if (MixAddOutputCombo.SelectedItem is AudioDeviceInfo device)
+            DispatcherQueue.TryEnqueue(() => _vm.AddMixExtraOutput(device.Id));
+    }
+
+    #endregion
 
     private void ToggleAddAppInline_Click(object sender, RoutedEventArgs e)
     {
