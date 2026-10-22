@@ -96,20 +96,24 @@ public sealed unsafe class VstHostInstance : IDisposable
                 return;
             }
 
-            // Check VST3 entry point first
-            if (NativeLibrary.TryGetExport(_moduleHandle, "GetPluginFactory", out IntPtr getFactoryPtr))
-            {
-                _isVst3 = true;
-                _isLoaded = InitializeVst3(getFactoryPtr, sampleRate);
-                return;
-            }
+            // Same entry point the scanner classified (see VstScanner.RunIsolatedVstProbeCli): VST2 for a .dll that
+            // has one, falling back to VST3 when the VST2 entry returns no plugin; otherwise VST3.
+            bool hasVst2 = NativeLibrary.TryGetExport(_moduleHandle, "VSTPluginMain", out IntPtr vstMainPtr) ||
+                           NativeLibrary.TryGetExport(_moduleHandle, "main", out vstMainPtr);
+            bool hasVst3 = NativeLibrary.TryGetExport(_moduleHandle, "GetPluginFactory", out IntPtr getFactoryPtr);
 
-            // Check VST2 entry points
-            if (NativeLibrary.TryGetExport(_moduleHandle, "VSTPluginMain", out IntPtr vstMainPtr) ||
-                NativeLibrary.TryGetExport(_moduleHandle, "main", out vstMainPtr))
+            if (hasVst2 && (VstScanner.PrefersVst2Entry(PluginPath) || !hasVst3))
             {
                 _isVst3 = false;
                 _isLoaded = InitializeVst2(vstMainPtr, sampleRate);
+                if (_isLoaded || !hasVst3)
+                    return;
+            }
+
+            if (hasVst3)
+            {
+                _isVst3 = true;
+                _isLoaded = InitializeVst3(getFactoryPtr, sampleRate);
                 return;
             }
 
@@ -154,36 +158,22 @@ public sealed unsafe class VstHostInstance : IDisposable
         _plugFrameComPtr = CreatePlugFrameVTable();
 
         void** factoryVtbl = *(void***)_vst3Factory;
-        var countClasses = (delegate* unmanaged[Stdcall]<void*, int>)factoryVtbl[4];
         var getClassInfo = (delegate* unmanaged[Stdcall]<void*, int, PClassInfo*, int>)factoryVtbl[5];
         var createInstance = (delegate* unmanaged[Stdcall]<void*, byte*, byte*, void**, int>)factoryVtbl[6];
 
-        int numClasses = countClasses(_vst3Factory);
-        Guid audioClassCid = Guid.Empty;
-
-        for (int i = 0; i < numClasses; i++)
-        {
-            PClassInfo info = default;
-            if (getClassInfo(_vst3Factory, i, &info) == 0)
-            {
-                string category = Encoding.ASCII.GetString(info.Category, 32).TrimEnd('\0');
-                string name = Encoding.ASCII.GetString(info.Name, 64).TrimEnd('\0');
-                if (category.Equals("Audio Module Class", StringComparison.OrdinalIgnoreCase) || audioClassCid == Guid.Empty)
-                {
-                    audioClassCid = new Guid(new ReadOnlySpan<byte>(info.Cid, 16));
-                    if (!string.IsNullOrWhiteSpace(name))
-                        PluginName = name;
-                    if (category.Equals("Audio Module Class", StringComparison.OrdinalIgnoreCase))
-                        break;
-                }
-            }
-        }
-
-        if (audioClassCid == Guid.Empty)
+        // The effect class when the plugin also holds an instrument (Serum2.vst3: "Serum 2" and "Serum 2 FX")
+        int audioClass = VstScanner.FindVst3AudioClass(_vst3Factory, out _);
+        PClassInfo info = default;
+        if (audioClass < 0 || getClassInfo(_vst3Factory, audioClass, &info) != 0)
         {
             LastError = "No Audio Module Class found in VST3 factory.";
             return false;
         }
+
+        Guid audioClassCid = new Guid(new ReadOnlySpan<byte>(info.Cid, 16));
+        string name = Encoding.ASCII.GetString(info.Name, 64).TrimEnd('\0');
+        if (!string.IsNullOrWhiteSpace(name))
+            PluginName = name;
 
         byte* cidBytes = stackalloc byte[16];
         byte* iidCompBytes = stackalloc byte[16];
@@ -354,6 +344,7 @@ public sealed unsafe class VstHostInstance : IDisposable
         if (_vst2Effect == null || _vst2Effect->Magic != 0x56737450) // 'VstP'
         {
             LastError = "Invalid VST2 AEffect magic header.";
+            _vst2Effect = null;   // the VST3 fallback (and Dispose) must not touch it
             return false;
         }
 
@@ -373,12 +364,7 @@ public sealed unsafe class VstHostInstance : IDisposable
 
     private static nint Vst2HostCallback(AEffect* effect, int opcode, int index, nint value, void* ptr, float opt)
     {
-        return opcode switch
-        {
-            1 => 2400, // audioMasterVersion (VST 2.4)
-            7 => 0,    // audioMasterGetTime
-            _ => 0
-        };
+        return VstScanner.Vst2HostInfo(opcode, ptr);
     }
 
     #endregion

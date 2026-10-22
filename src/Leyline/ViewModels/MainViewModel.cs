@@ -1348,9 +1348,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void ScanVstPlugins(bool forceDeepProbe = false)
+    private bool _isScanningVst;
+
+    // Probing new plugins loads each one in a child process, so the scan runs off the UI thread.
+    public async void ScanVstPlugins(bool forceDeepProbe = false)
     {
-        var all = VstScanner.ScanPlugins(Config.CustomVstDirectories, Config.AllowedBlockedVstPaths, forceDeepProbe);
+        if (_isScanningVst)
+            return;
+        _isScanningVst = true;
+
+        List<VstPluginInfo> all;
+        try
+        {
+            var directories = Config.CustomVstDirectories.ToList();
+            var allowed = Config.AllowedBlockedVstPaths.ToList();
+            if (forceDeepProbe)
+                StatusBannerText = "Scanning plugins...";
+            all = await Task.Run(() => VstScanner.ScanPlugins(directories, allowed, forceDeepProbe));
+        }
+        finally
+        {
+            _isScanningVst = false;
+        }
 
         ScannedEffectPlugins.Clear();
         BrokenPlugins.Clear();
@@ -1373,6 +1392,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         RebuildUsableVstList();
+        if (forceDeepProbe)
+            StatusBannerText = $"Found {ScannedEffectPlugins.Count} effects and {VirtualInstrumentPlugins.Count} instruments.";
     }
 
     private void RebuildUsableVstList()
