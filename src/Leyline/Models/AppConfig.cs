@@ -15,7 +15,6 @@ public sealed class AppConfig
     public float StreamMasterVolume { get; set; } = 0.95f;
     public bool IsMonitorMasterMuted { get; set; }
     public bool IsStreamMasterMuted { get; set; }
-    public float SoundboardMasterVolume { get; set; } = 0.90f;
 
     public DspChainModel MonitorMasterDsp { get; set; } = new();
     public DspChainModel StreamMasterDsp { get; set; } = new();
@@ -47,5 +46,4 @@ public sealed class AppConfig
 
     public List<OutputMixBusModel> MixBuses { get; set; } = new();
     public List<ChannelStripModel> Channels { get; set; } = new();
-    public List<SoundPadModel> SoundPads { get; set; } = new();
 }

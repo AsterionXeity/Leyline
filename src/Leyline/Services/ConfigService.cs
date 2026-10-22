@@ -32,8 +32,7 @@ public static class ConfigService
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
                 if (cfg != null && cfg.Channels.Count > 0)
                 {
-                    if (cfg.SoundPads.Count == 0)
-                        cfg.SoundPads = SampleGenerator.EnsureDefaultPads();
+                    RemoveSoundboardChannels(cfg);
                     if (cfg.MixBuses.Count == 0)
                         cfg.MixBuses = CreateDefaultMixBuses();
                     return cfg;
@@ -114,8 +113,7 @@ public static class ConfigService
             }
             if (cfg.MixBuses.Count == 0)
                 cfg.MixBuses = CreateDefaultMixBuses();
-            if (cfg.SoundPads.Count == 0)
-                cfg.SoundPads = SampleGenerator.EnsureDefaultPads();
+            RemoveSoundboardChannels(cfg);
 
             importedConfig = cfg;
             return true;
@@ -150,9 +148,12 @@ public static class ConfigService
         AddAppGroupRow(config, devices, "System", "🖥️", "#29B6F6", "System",
             personal: true, stream: false, discord: false, micRec: false, []);
 
-        config.SoundPads = SampleGenerator.EnsureDefaultPads();
         return config;
     }
+
+    // The soundboard was removed; its channel has no source anymore (older configs' pads are ignored on load)
+    private static void RemoveSoundboardChannels(AppConfig config) =>
+        config.Channels.RemoveAll(c => c.SourceType == ChannelSourceType.SoundboardChannel);
 
     public static ChannelStripModel CreatePresetChannel(string presetKey, IReadOnlyList<AudioDeviceInfo> devices)
     {
@@ -212,22 +213,6 @@ public static class ConfigService
                     ],
                     streamMuted: true);
                 return tempConfig.Channels[0];
-
-            case "soundboard":
-                return new ChannelStripModel
-                {
-                    Name = "Soundboard",
-                    Icon = "〰️",
-                    AccentHex = "#FF7043",
-                    SourceType = ChannelSourceType.SoundboardChannel,
-                    DeviceId = string.Empty,
-                    DeviceName = "Leyline Built-in Sampler",
-                    InputVolume = 0.90f,
-                    PersonalMix = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
-                    StreamMix   = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false },
-                    DiscordMix  = new MixSendState { IsEnabled = false, Volume = 0.80f, IsMuted = false },
-                    MicRecMix   = new MixSendState { IsEnabled = true, Volume = 0.85f, IsMuted = false }
-                };
 
             case "microphone":
             default:

@@ -79,12 +79,6 @@ public sealed class ChannelStripProcessor : IDisposable
 
         try
         {
-            if (Model.SourceType == ChannelSourceType.SoundboardChannel)
-            {
-                Model.StatusText = "Built-in Soundboard";
-                return;
-            }
-
             if (Model.SourceType == ChannelSourceType.MicrophoneInput)
             {
                 // Strictly hardware/virtual eCapture ONLY; never fallback to default if unselected
@@ -299,13 +293,6 @@ public sealed class ChannelStripProcessor : IDisposable
         {
             Model.StatusText = $"Capturing {_appCaptures.Count} app(s)";
         }
-    }
-
-    public void InjectExternalStereo48k(ReadOnlySpan<float> stereoInterleaved, int sampleFrames)
-    {
-        if (!_isRunning || sampleFrames <= 0) return;
-        float[] copy = stereoInterleaved[..(sampleFrames * 2)].ToArray();
-        ProcessAndDispatchStereo(copy, sampleFrames);
     }
 
     private void OnCaptureDataAvailable(object? sender, WaveInEventArgs e)

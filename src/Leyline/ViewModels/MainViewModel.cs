@@ -20,8 +20,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private static readonly HashSet<string> AutoSavedViewModelProperties =
     [
         nameof(MonitorMasterVolume), nameof(StreamMasterVolume),
-        nameof(IsMonitorMasterMuted), nameof(IsStreamMasterMuted),
-        nameof(SoundboardMasterVolume)
+        nameof(IsMonitorMasterMuted), nameof(IsStreamMasterMuted)
     ];
     // Meters update on the UI's frame callback, at most this often (120 per second)
     private const double MinMeterIntervalMs = 8.0;
@@ -67,13 +66,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public AudioEngine Engine { get; }
     public AppConfig Config { get; private set; }
-    public GlobalHotkeyService Hotkeys { get; }
+    public TrayIconService Tray { get; }
     public Func<bool>? IsAnyPopupOpen { get; set; }
     private bool _isPollingSessions;
 
     public ObservableCollection<OutputMixBusModel> MixBuses { get; } = new();
     public ObservableCollection<ChannelStripModel> Channels { get; } = new();
-    public ObservableCollection<SoundPadModel> SoundPads { get; } = new();
 
     // Strictly separated device lists (with "None / Unselected" at index 0)
     public ObservableCollection<AudioDeviceInfo> AllDevices { get; } = new();
@@ -432,21 +430,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public float SoundboardMasterVolume
-    {
-        get => Engine.Soundboard.MasterVolume;
-        set
-        {
-            float clamped = Math.Clamp(value, 0f, 1.5f);
-            Engine.Soundboard.MasterVolume = clamped;
-            Config.SoundboardMasterVolume = clamped;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SoundboardMasterPercent));
-        }
-    }
-
-    public int SoundboardMasterPercent => (int)Math.Round(SoundboardMasterVolume * 100f);
-
     public float MonitorMasterPeakL
     {
         get => _monitorMasterPeakL;
@@ -573,8 +556,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand CloseSettingsCommand { get; }
     public RelayCommand RefreshDevicesCommand { get; }
     public RelayCommand RefreshAppsCommand { get; }
-    public RelayCommand StopAllSoundsCommand { get; }
-    public RelayCommand TriggerPadCommand { get; }
     public RelayCommand ToggleMonitorMuteCommand { get; }
     public RelayCommand ToggleStreamMuteCommand { get; }
     public RelayCommand ToggleChannelInputMuteCommand { get; }
@@ -598,7 +579,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // Create Channel Popover Commands (Screenshot 3)
     public RelayCommand ToggleCreateChannelPopoverCommand { get; }
     public RelayCommand CreateChannelFromInputDeviceCommand { get; }
-    public RelayCommand CreateSoundboardChannelCommand { get; }
     public RelayCommand CreateChannelFromActiveAppCommand { get; }
     public RelayCommand CreateChannelFromSuggestedAppCommand { get; }
     public RelayCommand CreateEmptyChannelCommand { get; }
@@ -623,24 +603,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             MonitorMasterDspModel = Config.MonitorMasterDsp,
             StreamMasterDspModel = Config.StreamMasterDsp
         };
-        Engine.Soundboard.MasterVolume = Config.SoundboardMasterVolume;
         Engine.SetListeningMixIndex(_listeningMixIndex);
 
-        Hotkeys = new GlobalHotkeyService();
-        Hotkeys.PadHotkeyPressed += pad =>
-        {
-            if (_dispatcherQueue != null)
-                _dispatcherQueue.TryEnqueue(() => Engine.Soundboard.TriggerPad(pad));
-            else
-                Engine.Soundboard.TriggerPad(pad);
-        };
-        Hotkeys.StopAllHotkeyPressed += () =>
-        {
-            if (_dispatcherQueue != null)
-                _dispatcherQueue.TryEnqueue(() => Engine.Soundboard.StopAll());
-            else
-                Engine.Soundboard.StopAll();
-        };
+        Tray = new TrayIconService();
 
         ToggleThemeCommand = new RelayCommand(() => IsLightMode = !IsLightMode);
         ToggleCompactModeCommand = new RelayCommand(() => IsCompactMode = !IsCompactMode);
@@ -649,13 +614,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         RefreshDevicesCommand = new RelayCommand(RefreshAudioDevices);
         RefreshAppsCommand = new RelayCommand(RefreshActiveAppSessions);
-        StopAllSoundsCommand = new RelayCommand(() => Engine.Soundboard.StopAll());
-        TriggerPadCommand = new RelayCommand(p =>
-        {
-            if (p is SoundPadModel pad)
-                Engine.Soundboard.TriggerPad(pad);
-        });
-
         ToggleMonitorMuteCommand = new RelayCommand(() => IsMonitorMasterMuted = !IsMonitorMasterMuted);
         ToggleStreamMuteCommand = new RelayCommand(() => IsStreamMasterMuted = !IsStreamMasterMuted);
 
@@ -808,7 +766,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Engine.RemoveChannel(old.Id);
 
             Config.Channels = fresh.Channels;
-            InitializeChannelsAndPads();
+            InitializeChannels();
             SaveConfig();
             StatusBannerText = "Restored default System channel configuration.";
         });
@@ -849,27 +807,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 IsCreateChannelPopoverOpen = false;
                 StatusBannerText = $"Added Input Device channel: {dev.Name}";
             }
-        });
-
-        CreateSoundboardChannelCommand = new RelayCommand(() =>
-        {
-            IsCreateChannelPopoverOpen = false;
-            var existing = Channels.FirstOrDefault(c => c.SourceType == ChannelSourceType.SoundboardChannel);
-            if (existing != null)
-            {
-                OpenChannelConfig(existing, 0);
-                return;
-            }
-            var sb = new ChannelStripModel
-            {
-                Name = "Soundboard",
-                Icon = "〰️",
-                AccentHex = "#FF7043",
-                SourceType = ChannelSourceType.SoundboardChannel,
-                DeviceName = "Leyline Built-in Sampler",
-                InputVolume = 0.90f
-            };
-            AddChannel(sb);
         });
 
         CreateChannelFromActiveAppCommand = new RelayCommand(p =>
@@ -940,7 +877,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         RefreshAudioDevices();
         ConnectMixOutputCables();
-        InitializeChannelsAndPads();
+        InitializeChannels();
         ApplyAllMixExtraOutputs();
 
         if (_dispatcherQueue != null)
@@ -1079,7 +1016,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void InitializeChannelsAndPads()
+    private void InitializeChannels()
     {
         MixBuses.Clear();
         if (Config.MixBuses.Count == 0)
@@ -1098,12 +1035,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ch.NotifyFxChanged();
             Channels.Add(ch);
             Engine.AddOrRestartChannel(ch);
-        }
-
-        SoundPads.Clear();
-        foreach (var pad in Config.SoundPads)
-        {
-            SoundPads.Add(pad);
         }
     }
 
@@ -1127,7 +1058,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private void EnsureChannelBoundToCable(ChannelStripModel channel)
     {
-        if (channel.IsHardwareInput || channel.SourceType == ChannelSourceType.SoundboardChannel)
+        if (channel.IsHardwareInput)
             return;
 
         // Channels from older configs (and app channels) get a cable from their name.
@@ -1643,7 +1574,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         foreach (var ch in Channels)
         {
-            if (ch.IsHardwareInput || ch.SourceType == ChannelSourceType.SoundboardChannel)
+            if (ch.IsHardwareInput)
                 continue;
 
             EnsureChannelBoundToCable(ch);
@@ -1690,12 +1621,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Engine.IsStreamMasterMuted = Config.IsStreamMasterMuted;
         Engine.MonitorMasterDspModel = Config.MonitorMasterDsp;
         Engine.StreamMasterDspModel = Config.StreamMasterDsp;
-        Engine.Soundboard.MasterVolume = Config.SoundboardMasterVolume;
 
         RefreshAudioDevices();
-        InitializeChannelsAndPads();
+        InitializeChannels();
         ApplyAllMixExtraOutputs();
-        Hotkeys.RebindAll(SoundPads);
         ScanVstPlugins(forceDeepProbe: false);
         UpdateChannelRoutedAppCounts();
         SaveConfig();
@@ -1707,7 +1636,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void SaveConfig()
     {
         ConfigService.Save(Config);
-        _autoSaver?.Watch(Config);   // channels, mixes and pads added since the last save
+        _autoSaver?.Watch(Config);   // channels and mixes added since the last save
     }
 
     // Runs once per rendered frame (not while the window is hidden), so meters move at the display's frame rate
@@ -1734,7 +1663,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CompositionTarget.Rendering -= OnRenderingMeters;
         _sessionPollTimer.Stop();
         SaveConfig();
-        Hotkeys.Dispose();
+        Tray.Dispose();
         Engine.Dispose();
     }
 }

@@ -9,7 +9,7 @@ public enum ChannelSourceType
     MicrophoneInput,
     VirtualDeviceLoopback,
     ProcessCapture,
-    SoundboardChannel,
+    SoundboardChannel,   // removed feature; kept so the saved numbers of the types after it stay the same
     AppGroupChannel
 }
 
@@ -442,7 +442,6 @@ public sealed class ChannelStripModel : ObservableObject
         ChannelSourceType.MicrophoneInput => "INPUT DEVICE",
         ChannelSourceType.VirtualDeviceLoopback => "VIRTUAL BUS",
         ChannelSourceType.ProcessCapture => "APP STREAM",
-        ChannelSourceType.SoundboardChannel => "BUILT-IN",
         ChannelSourceType.AppGroupChannel => "APP CHANNEL",
         _ => "AUDIO"
     };

@@ -41,7 +41,6 @@ public sealed class AudioEngine : IDisposable
     private readonly List<ExtraOutput> _extraOutputs = new();
 
     private sealed record ExtraOutput(int Mix, string DeviceId, WasapiOut Output, BufferedWaveProvider? Tap);
-    private System.Threading.Timer? _soundboardPumpTimer;
     private string _currentMonitorDeviceId = string.Empty;
     private string _currentStreamDeviceId = string.Empty;
     private string _requestedStreamDeviceId = string.Empty;  // user's Stream output choice ("" = none)
@@ -52,7 +51,6 @@ public sealed class AudioEngine : IDisposable
     private WaveFileWriter? _streamRecorder;
     private readonly object _recordLock = new();
 
-    public SoundboardPlayer Soundboard { get; }
     public DspChainProcessor MonitorMasterDsp { get; }
     public DspChainProcessor StreamMasterDsp { get; }
 
@@ -74,7 +72,6 @@ public sealed class AudioEngine : IDisposable
 
     public AudioEngine()
     {
-        Soundboard = new SoundboardPlayer(SampleRate);
         MonitorMasterDsp = new DspChainProcessor(SampleRate);
         StreamMasterDsp = new DspChainProcessor(SampleRate);
 
@@ -110,38 +107,6 @@ public sealed class AudioEngine : IDisposable
             () => new DspChainModel(),
             () => 1.0f,
             null);
-
-        // Pump Soundboard samples directly into the Soundboard Channel Strip (20ms cadence = 960 stereo frames @ 48kHz)
-        _soundboardPumpTimer = new System.Threading.Timer(PumpSoundboardToChannel, null, 20, 20);
-    }
-
-    private void PumpSoundboardToChannel(object? state)
-    {
-        const int frames = 960;
-        float[] monBuf = new float[frames * 2];
-        float[] strBuf = new float[frames * 2];
-        Soundboard.MixNextBlock(monBuf, strBuf, frames);
-
-        // Check if soundboard produced non-zero audio
-        bool hasSignal = false;
-        for (int i = 0; i < monBuf.Length; i++)
-        {
-            if (MathF.Abs(monBuf[i]) > 0.00001f)
-            {
-                hasSignal = true;
-                break;
-            }
-        }
-        if (!hasSignal) return;
-
-        lock (_engineLock)
-        {
-            var sbChannel = _channels.FirstOrDefault(c =>
-                c.Model.SourceType == ChannelSourceType.SoundboardChannel ||
-                c.Model.Name.Equals("Soundboard", StringComparison.OrdinalIgnoreCase));
-
-            sbChannel?.InjectExternalStereo48k(monBuf, frames);
-        }
     }
 
     /// <summary>
@@ -637,9 +602,6 @@ public sealed class AudioEngine : IDisposable
 
     public void Dispose()
     {
-        _soundboardPumpTimer?.Dispose();
-        _soundboardPumpTimer = null;
-
         lock (_engineLock)
         {
             _monitorOut?.Stop();
@@ -659,7 +621,6 @@ public sealed class AudioEngine : IDisposable
                 ch.Dispose();
             _channels.Clear();
 
-            Soundboard.Dispose();
             MonitorMasterDsp.Dispose();
             StreamMasterDsp.Dispose();
         }

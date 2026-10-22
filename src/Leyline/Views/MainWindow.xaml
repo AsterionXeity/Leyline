@@ -168,13 +168,6 @@
                                 <TextBlock Text="Audio Flow" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-
-                        <Button x:Name="NavSoundboardBtn" Style="{StaticResource NavItemBtn}" Click="NavSoundboard_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <TextBlock Text="〰" FontSize="14" FontWeight="Bold" VerticalAlignment="Center" Margin="1,0,1,0"/>
-                                <TextBlock Text="Soundboard" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
                     </StackPanel>
 
                     <!-- Bottom Sidebar Footer (Matches Screenshot 2 & 5) -->
@@ -710,17 +703,9 @@
                                                                 </ItemsControl.ItemTemplate>
                                                             </ItemsControl>
 
-                                                            <!-- 2. Built-in & Preset Channels (Soundboard, Browser, Game, Music, Voice Chat, OBS/Stream, Microphone, System) -->
+                                                            <!-- 2. Preset Channels (Browser, Game, Music, Voice Chat, OBS/Stream, Microphone, System) -->
                                                             <TextBlock Text="Leyline" FontSize="11.5" Foreground="{ThemeResource TextSecondaryBrush}" Margin="6,12,0,6"/>
                                                             <Border Height="1" Background="#2E2E34" Margin="4,0,4,6"/>
-                                                            <Button Style="{StaticResource PopoverItemBtn}" Click="CreateSoundboardChannel_Click">
-                                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                                    <Border Width="20" Height="20" Background="#FF7043" CornerRadius="4">
-                                                                        <TextBlock Text="〰" FontSize="11" FontWeight="Bold" Foreground="#141418" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                                    </Border>
-                                                                    <TextBlock Text="Soundboard" FontSize="12.5" Foreground="{ThemeResource TextPrimaryBrush}" VerticalAlignment="Center"/>
-                                                                </StackPanel>
-                                                            </Button>
                                                             <Button Style="{StaticResource PopoverItemBtn}" Tag="Browser" Click="CreatePresetChannel_Click">
                                                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                                                     <Border Width="20" Height="20" Background="#9C27B0" CornerRadius="4">
@@ -1007,97 +992,6 @@
                     </Grid>
                 </Grid>
 
-                <!-- ****************************************************************** -->
-                <!-- VIEW 2: SOUNDBOARD                                                 -->
-                <!-- ****************************************************************** -->
-                <Grid x:Name="SoundboardView" Visibility="Collapsed" Margin="24,14,18,12">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-
-                    <Grid Grid.Row="0" Margin="0,0,0,18">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Soundboard" FontSize="24" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}"/>
-                            <TextBlock Text="Routes directly through the dedicated Soundboard mixer channel • Global Hotkeys work in-game"
-                                       FontSize="12" Foreground="{ThemeResource TextMutedBrush}" Margin="0,4,0,0"/>
-                        </StackPanel>
-
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Content="⏹ Stop All (Ctrl+Shift+0)" Style="{StaticResource MatBtn}" Command="{Binding StopAllSoundsCommand}"/>
-                            <Button Content="+ Add Sound Pad" Style="{StaticResource MatPrimaryBtn}" Click="AddSoundPad_Click"/>
-                        </StackPanel>
-                    </Grid>
-
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding SoundPads}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <views:WrapPanel/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="216" Height="132" Background="{ThemeResource BgCardBrush}"
-                                            CornerRadius="8" Margin="0,0,12,12">
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="4"/>
-                                                <RowDefinition Height="*"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            <Border Grid.Row="0" Background="{Binding ColorHex, Converter={StaticResource HexToBrush}}" CornerRadius="8,8,0,0"/>
-
-                                            <Button Grid.Row="1" Background="Transparent" BorderThickness="0"
-                                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
-                                                    Padding="14,8" Tag="{Binding}" Click="TriggerSoundPad_Click">
-                                                <StackPanel VerticalAlignment="Center">
-                                                    <Grid Margin="0,0,0,6">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock Grid.Column="0" Text="{Binding Emoji}" FontSize="22"/>
-                                                        <Border Grid.Column="1" Background="{ThemeResource BgEmptyCellBrush}" CornerRadius="4" Padding="6,2" VerticalAlignment="Top">
-                                                            <TextBlock Text="{Binding HotkeyDisplay}" FontSize="10" FontWeight="Bold" Foreground="{ThemeResource AccentPrimaryBrush}"/>
-                                                        </Border>
-                                                    </Grid>
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"
-                                                               Foreground="{ThemeResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
-                                                </StackPanel>
-                                            </Button>
-
-                                            <Border Grid.Row="2" Background="{ThemeResource BgEmptyCellBrush}" CornerRadius="0,0,8,8" Padding="12,5">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding VolumePercentText}" FontSize="11"
-                                                               Foreground="{ThemeResource TextMutedBrush}" VerticalAlignment="Center"/>
-                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                                        <Button Content="Edit" Tag="{Binding}" Background="Transparent"
-                                                                Foreground="{ThemeResource TextSecondaryBrush}" BorderThickness="0"
-                                                                FontSize="11" Padding="6,2" Click="EditSoundPad_Click"/>
-                                                        <Button Content="✕" Tag="{Binding}" Background="Transparent"
-                                                                Foreground="#EF5350" BorderThickness="0"
-                                                                FontSize="11" Padding="6,2" Click="DeleteSoundPad_Click"/>
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Grid>
             </Grid>
         </Grid>
 
@@ -1897,7 +1791,7 @@
                                 <Border Background="{ThemeResource BgCardBrush}" CornerRadius="8" Padding="18">
                                     <StackPanel>
                                         <TextBlock Text="Configuration Backup &amp; Import" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextPrimaryBrush}" Margin="0,0,0,4"/>
-                                        <TextBlock Text="Export your channels, mixes, app routing, DSP/VST chains, and soundboard pads to a JSON backup file, or import an existing backup."
+                                        <TextBlock Text="Export your channels, mixes, app routing, and DSP/VST chains to a JSON backup file, or import an existing backup."
                                                    FontSize="12" Foreground="{ThemeResource TextMutedBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10">
                                             <Button Content="Backup Configuration (.json)..." Style="{StaticResource MatPrimaryBtn}"
@@ -2179,7 +2073,7 @@
                                 <Border Background="{ThemeResource BgCardBrush}" CornerRadius="8" Padding="18" Margin="0,0,0,14">
                                     <StackPanel>
                                         <TextBlock Text="Backup &amp; Import Configuration" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextPrimaryBrush}" Margin="0,0,0,6"/>
-                                        <TextBlock Text="Save a complete backup of your Leyline channels, mixes, app assignments, DSP/VST chains, and soundboard pads, or import a previously saved backup file."
+                                        <TextBlock Text="Save a complete backup of your Leyline channels, mixes, app assignments and DSP/VST chains, or import a previously saved backup file."
                                                    FontSize="12.5" Foreground="{ThemeResource TextMutedBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
                                         <TextBlock Text="{Binding ConfigFilePathText}" FontSize="11" Foreground="{ThemeResource AccentPrimaryBrush}" Margin="0,0,0,14" TextTrimming="CharacterEllipsis"/>
                                         <StackPanel Orientation="Horizontal" Spacing="10">
