@@ -42,12 +42,21 @@ UninstallDisplayIcon={app}\Leyline.exe
 SetupIconFile=..\src\Leyline\Assets\Leyline.ico
 CloseApplications=force
 RestartApplications=no
+; The startup entry below is per user (HKCU): the account that runs Setup gets it
+UsedUserAreasWarning=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "autostart"; Description: "Start Leyline when Windows starts"; GroupDescription: "Startup:"
+
+[Registry]
+; Same entry Leyline's own "Start Leyline automatically" setting writes (StartupService); it points at this install,
+; replacing one left by a copy elsewhere, and is removed on uninstall either way.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Leyline"; ValueData: """{app}\Leyline.exe"""; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Leyline"; Flags: uninsdeletevalue
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
